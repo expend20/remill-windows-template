@@ -38,3 +38,20 @@ main PROC
     or eax, 37h
     ret
 main ENDP
+
+---
+
+I need a test similar to or_const.asm, but the test source should be provided as a standalone .cpp file, e.g.:
+
+```
+int test_me()
+{
+  return 0x1337;
+}
+```
+
+This code should be compiled into .exe, then processed by pe64 reader...
+
+---
+
+add extra step for the last test, before compiling .cpp it to .exe, compile input into .ll file so user could see it. Also add flag to disable optimization for it.

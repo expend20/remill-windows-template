@@ -33,6 +33,7 @@ target_link_libraries(lifting_common PUBLIC
 
 # Find tools for tests
 find_program(CLANG_EXECUTABLE clang HINTS "${LLVM_TOOLS_BINARY_DIR}")
+find_program(CLANG_CL_EXECUTABLE clang-cl HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
 find_program(ML64_EXECUTABLE ml64)
 if(ML64_EXECUTABLE)
     get_filename_component(ML64_DIR "${ML64_EXECUTABLE}" DIRECTORY)
@@ -55,6 +56,7 @@ else()
 
     enable_testing()
     include(add_asm_lifting_test)
+    include(add_cpp_lifting_test)
 
     add_asm_lifting_test(
         NAME mov_const
@@ -71,4 +73,19 @@ else()
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
+
+    if(CLANG_CL_EXECUTABLE)
+        message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
+
+        add_cpp_lifting_test(
+            NAME ret_const
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/ret_const.cpp
+            ENTRY test_me
+            LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+            RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+            EXPECTED_EXIT_CODE 4919
+        )
+    else()
+        message(STATUS "clang-cl not found, C++ tests will not be available")
+    endif()
 endif()
