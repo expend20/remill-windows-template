@@ -41,25 +41,42 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // mov rcx, 1337
-  uint8_t instr_bytes[] = {0x48, 0xc7, 0xc1, 0x39, 0x05, 0x00, 0x00};
+  // mov eax, 0x1337; ret
+  uint8_t instr_bytes[] = {0xB8, 0x37, 0x13, 0x00, 0x00, 0xC3};
   std::string_view instr_view(reinterpret_cast<char *>(instr_bytes),
                               sizeof(instr_bytes));
-  remill::Instruction instruction;
   remill::DecodingContext decoding_context = arch->CreateInitialContext();
-  if (!arch->DecodeInstruction(0x1000, instr_view, instruction,
+
+  auto function =
+      arch->DefineLiftedFunction("lifted_mov_eax_ret", semantics.get());
+  auto block = &function->getEntryBlock();
+
+  // Decode and lift: mov eax, 0x1337
+  remill::Instruction mov_instr;
+  if (!arch->DecodeInstruction(0x1000, instr_view, mov_instr,
                                decoding_context)) {
-    std::cerr << "Failed to decode instruction\n";
+    std::cerr << "Failed to decode mov instruction\n";
+    return EXIT_FAILURE;
+  }
+  auto mov_lifter = mov_instr.GetLifter();
+  auto mov_status = mov_lifter->LiftIntoBlock(mov_instr, block);
+  if (mov_status != remill::kLiftedInstruction) {
+    std::cerr << "Failed to lift mov instruction\n";
     return EXIT_FAILURE;
   }
 
-  auto function =
-      arch->DefineLiftedFunction("lifted_mov_rcx", semantics.get());
-  auto block = &function->getEntryBlock();
-  auto lifter = instruction.GetLifter();
-  auto status = lifter->LiftIntoBlock(instruction, block);
-  if (status != remill::kLiftedInstruction) {
-    std::cerr << "Failed to lift instruction\n";
+  // Decode and lift: ret
+  std::string_view ret_view(reinterpret_cast<char *>(instr_bytes) + 5, 1);
+  remill::Instruction ret_instr;
+  if (!arch->DecodeInstruction(0x1005, ret_view, ret_instr,
+                               decoding_context)) {
+    std::cerr << "Failed to decode ret instruction\n";
+    return EXIT_FAILURE;
+  }
+  auto ret_lifter = ret_instr.GetLifter();
+  auto ret_status = ret_lifter->LiftIntoBlock(ret_instr, block);
+  if (ret_status != remill::kLiftedInstruction) {
+    std::cerr << "Failed to lift ret instruction\n";
     return EXIT_FAILURE;
   }
 
