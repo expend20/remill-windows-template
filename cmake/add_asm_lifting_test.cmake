@@ -1,0 +1,78 @@
+# add_asm_lifting_test(
+#   NAME <test_name>
+#   ASM <path_to_asm>
+#   LIFTER_SRC <path_to_lifter_main.cpp>
+#   RUNNER_SRC <path_to_test_main.cpp>
+#   EXPECTED_EXIT_CODE <exit_code>
+# )
+function(add_asm_lifting_test)
+    cmake_parse_arguments(ARG "" "NAME;ASM;LIFTER_SRC;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+
+    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
+    file(MAKE_DIRECTORY ${BUILD_DIR})
+
+    set(OBJ_FILE ${BUILD_DIR}/shellcode.obj)
+    set(EXE_FILE ${BUILD_DIR}/shellcode.exe)
+    set(OPTIMIZED_LL ${BUILD_DIR}/test_optimized.ll)
+    set(OPTIMIZED_O ${BUILD_DIR}/test_optimized.o)
+
+    # Lifter executable
+    add_executable(${ARG_NAME}_lifter ${ARG_LIFTER_SRC})
+    target_link_libraries(${ARG_NAME}_lifter PRIVATE lifting_common)
+
+    # Assemble .asm -> .obj
+    add_custom_command(
+        OUTPUT ${OBJ_FILE}
+        COMMAND ${ML64_EXECUTABLE} /c /nologo /Fo${OBJ_FILE} ${ARG_ASM}
+        DEPENDS ${ARG_ASM}
+        COMMENT "[${ARG_NAME}] Assembling ${ARG_ASM}..."
+        WORKING_DIRECTORY ${BUILD_DIR}
+    )
+
+    # Link .obj -> .exe
+    add_custom_command(
+        OUTPUT ${EXE_FILE}
+        COMMAND ${MSVC_LINK_EXECUTABLE} /nologo /SUBSYSTEM:CONSOLE /ENTRY:main
+            /OUT:${EXE_FILE} ${OBJ_FILE} kernel32.lib
+        DEPENDS ${OBJ_FILE}
+        COMMENT "[${ARG_NAME}] Linking shellcode.exe..."
+        WORKING_DIRECTORY ${BUILD_DIR}
+    )
+
+    # Lift .exe -> .ll/.bc
+    add_custom_command(
+        OUTPUT
+            ${OPTIMIZED_LL}
+            ${BUILD_DIR}/test_optimized.bc
+            ${BUILD_DIR}/lifted.ll
+            ${BUILD_DIR}/lifted.bc
+        COMMAND ${ARG_NAME}_lifter ${EXE_FILE}
+        DEPENDS ${ARG_NAME}_lifter ${EXE_FILE}
+        COMMENT "[${ARG_NAME}] Lifting..."
+        WORKING_DIRECTORY ${BUILD_DIR}
+    )
+
+    # Compile .ll -> .o
+    add_custom_command(
+        OUTPUT ${OPTIMIZED_O}
+        COMMAND ${CLANG_EXECUTABLE} -c -O2 ${OPTIMIZED_LL} -o ${OPTIMIZED_O}
+        DEPENDS ${OPTIMIZED_LL}
+        COMMENT "[${ARG_NAME}] Compiling lifted IR..."
+    )
+
+    add_custom_target(${ARG_NAME}_object DEPENDS ${OPTIMIZED_O})
+
+    # Runner executable
+    add_executable(${ARG_NAME}_runner ${ARG_RUNNER_SRC})
+    add_dependencies(${ARG_NAME}_runner ${ARG_NAME}_object)
+    target_link_libraries(${ARG_NAME}_runner PRIVATE ${OPTIMIZED_O})
+
+    # Test
+    add_test(
+        NAME ${ARG_NAME}_test
+        COMMAND ${CMAKE_COMMAND}
+            -DTEST_EXECUTABLE=$<TARGET_FILE:${ARG_NAME}_runner>
+            -DEXPECTED_EXIT_CODE=${ARG_EXPECTED_EXIT_CODE}
+            -P ${CMAKE_SOURCE_DIR}/cmake/check_exit_code.cmake
+    )
+endfunction()

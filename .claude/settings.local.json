@@ -21,7 +21,12 @@
       "Bash(PATH=\"E:/temp/remill-windows-template/dependencies/install/bin:$PATH\" E:/temp/remill-windows-template/build/hello_world.exe:*)",
       "Bash(grep:*)",
       "Bash(E:/temp/remill-windows-template/build/test_lifted.exe)",
-      "Bash(ctest:*)"
+      "Bash(ctest:*)",
+      "Bash(dir:*)",
+      "Bash(cmd /c:*)",
+      "Bash(E:/temp/remill-windows-template/build/ret_with_code_runner.exe)",
+      "Bash(echo:*)",
+      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/llvm-nm.exe:*)"
     ]
   }
 }
