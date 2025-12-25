@@ -28,3 +28,13 @@ Refactor hello world test:
 refactor ret_with_code test, I need shellcode to be compiled from assembly, use masm (ml64.exe from env) to compile the assembly, then write very siplistic pe64 reader to get the shellcode bytes from .exe file, then lift it
 
 scalable-foraging-boot.md
+
+---
+
+add another shellcode to tests corpus, let's see if this gets omptimized into a proper constant
+
+main PROC
+    mov eax, 1300h
+    or eax, 37h
+    ret
+main ENDP

@@ -57,8 +57,16 @@ else()
     include(add_asm_lifting_test)
 
     add_asm_lifting_test(
-        NAME ret_with_code
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/shellcode.asm
+        NAME mov_const
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/mov_const.asm
+        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME or_const
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/or_const.asm
         LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919

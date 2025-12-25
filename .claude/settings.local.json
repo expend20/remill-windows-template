@@ -26,7 +26,9 @@
       "Bash(cmd /c:*)",
       "Bash(E:/temp/remill-windows-template/build/ret_with_code_runner.exe)",
       "Bash(echo:*)",
-      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/llvm-nm.exe:*)"
+      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/llvm-nm.exe:*)",
+      "Bash(E:/temp/remill-windows-template/build/ret_with_code_lifter.exe E:/temp/remill-windows-template/build/tests/ret_with_code/shellcode.exe)",
+      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/llvm-objdump.exe:*)"
     ]
   }
 }

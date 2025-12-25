@@ -83,8 +83,13 @@ ParsePE64TextSection(const std::vector<uint8_t> &pe_data) {
             pe_data.data() + header_offset);
 
         if (std::strncmp(section->Name, ".text", 8) == 0) {
-            if (section->PointerToRawData + section->SizeOfRawData >
-                pe_data.size()) {
+            // Use VirtualSize (actual code size) not SizeOfRawData (file-aligned)
+            uint32_t code_size = section->VirtualSize;
+            if (code_size == 0 || code_size > section->SizeOfRawData) {
+                code_size = section->SizeOfRawData;
+            }
+
+            if (section->PointerToRawData + code_size > pe_data.size()) {
                 std::cerr << ".text section data out of bounds\n";
                 return std::nullopt;
             }
@@ -92,8 +97,7 @@ ParsePE64TextSection(const std::vector<uint8_t> &pe_data) {
             TextSectionInfo info;
             info.bytes.assign(
                 pe_data.begin() + section->PointerToRawData,
-                pe_data.begin() + section->PointerToRawData +
-                    section->SizeOfRawData);
+                pe_data.begin() + section->PointerToRawData + code_size);
             info.virtual_address = section->VirtualAddress;
             info.image_base = opt->ImageBase;
 
