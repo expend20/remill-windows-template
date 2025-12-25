@@ -1,7 +1,11 @@
 #include "optimizer.h"
+#include "lifting/memory_provider.h"
+
+#include <iostream>
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Transforms/IPO/ModuleInliner.h>
@@ -76,6 +80,68 @@ void RemoveMemoryIntrinsics(llvm::Module *module) {
           call->replaceAllUsesWith(llvm::UndefValue::get(call->getType()));
           call->eraseFromParent();
         }
+      }
+    }
+  }
+}
+
+void ReplaceMemoryIntrinsics(llvm::Module *module,
+                              const lifting::MemoryProvider *memory_provider) {
+  struct IntrinsicInfo {
+    const char *name;
+    unsigned size;
+  };
+
+  IntrinsicInfo intrinsics[] = {
+      {"__remill_read_memory_8", 1},
+      {"__remill_read_memory_16", 2},
+      {"__remill_read_memory_32", 4},
+      {"__remill_read_memory_64", 8},
+  };
+
+  for (const auto &info : intrinsics) {
+    if (auto *func = module->getFunction(info.name)) {
+      for (auto &use : llvm::make_early_inc_range(func->uses())) {
+        auto *call = llvm::dyn_cast<llvm::CallInst>(use.getUser());
+        if (!call) {
+          continue;
+        }
+
+        // Verify this is a call to the function (not another use like a function pointer)
+        if (call->getCalledFunction() != func) {
+          continue;
+        }
+
+        // Verify the call has the expected number of arguments
+        if (call->arg_size() < 2) {
+          continue;
+        }
+
+        // Get the address argument (second parameter: memory*, addr)
+        llvm::Value *addr_arg = call->getArgOperand(1);
+
+        llvm::Constant *replacement = nullptr;
+
+        // Try to get constant address
+        if (auto *addr_const = llvm::dyn_cast<llvm::ConstantInt>(addr_arg)) {
+          uint64_t address = addr_const->getZExtValue();
+
+          // Look up value in memory provider
+          auto value = memory_provider->ReadMemory(address, info.size);
+          if (value) {
+            replacement = llvm::ConstantInt::get(call->getType(), *value);
+            std::cout << "Resolved memory read at 0x" << std::hex << address
+                      << " -> 0x" << *value << std::dec << "\n";
+          }
+        }
+
+        // Fall back to undef for unknown addresses
+        if (!replacement) {
+          replacement = llvm::UndefValue::get(call->getType());
+        }
+
+        call->replaceAllUsesWith(replacement);
+        call->eraseFromParent();
       }
     }
   }

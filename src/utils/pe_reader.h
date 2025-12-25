@@ -108,6 +108,37 @@ struct TextSectionInfo {
     uint64_t image_base;
 };
 
+// Section characteristics flags
+constexpr uint32_t IMAGE_SCN_MEM_READ = 0x40000000;
+constexpr uint32_t IMAGE_SCN_MEM_WRITE = 0x80000000;
+constexpr uint32_t IMAGE_SCN_MEM_EXECUTE = 0x20000000;
+
+struct SectionInfo {
+    std::string name;
+    std::vector<uint8_t> bytes;
+    uint64_t virtual_address;  // RVA
+    uint64_t size;
+    uint32_t characteristics;
+
+    bool IsReadable() const { return characteristics & IMAGE_SCN_MEM_READ; }
+    bool IsWritable() const { return characteristics & IMAGE_SCN_MEM_WRITE; }
+    bool IsExecutable() const { return characteristics & IMAGE_SCN_MEM_EXECUTE; }
+};
+
+struct PEInfo {
+    std::vector<SectionInfo> sections;
+    uint64_t image_base;
+    uint64_t entry_point_rva;
+
+    const SectionInfo* FindSection(const std::string& name) const;
+    const SectionInfo* FindSectionContaining(uint64_t va) const;
+    std::optional<uint8_t> ReadByte(uint64_t va) const;
+    std::optional<uint32_t> ReadDword(uint64_t va) const;
+    std::optional<uint64_t> ReadQword(uint64_t va) const;
+};
+
+std::optional<PEInfo> ReadPE(const std::string& filepath);
+
 std::optional<TextSectionInfo> ReadTextSection(const std::string &filepath);
 
 }  // namespace utils

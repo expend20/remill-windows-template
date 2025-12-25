@@ -55,3 +55,25 @@ This code should be compiled into .exe, then processed by pe64 reader...
 ---
 
 add extra step for the last test, before compiling .cpp it to .exe, compile input into .ll file so user could see it. Also add flag to disable optimization for it.
+
+---
+
+Create new .cpp test:
+
+```
+int v = 0x37;
+
+extern "C" int test_me()
+{
+    return 0x1300 ^ v;
+}
+```
+
+this will probably break multiple things:
+- pe64 reader will not be able to read shellcode properly because it's not spread across multiple sections
+  - update pe64 reader to cover this case
+- lifter should be able to read the instruction as well as the constant memory it references, so in the end it should be optimized to exactly the same output as existing .cpp test (just returning 0x1337 value)
+
+---
+
+add this project as a submodule https://github.com/expend20/llvm-ob-passes use passe

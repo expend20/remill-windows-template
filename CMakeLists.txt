@@ -17,6 +17,7 @@ add_library(lifting_common STATIC
     src/lifting/lifting_context.cpp
     src/lifting/instruction_lifter.cpp
     src/lifting/wrapper_builder.cpp
+    src/lifting/memory_provider.cpp
     src/optimization/optimizer.cpp
     src/utils/module_utils.cpp
     src/utils/pe_reader.cpp
@@ -80,6 +81,15 @@ else()
         add_cpp_lifting_test(
             NAME ret_const
             CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/ret_const.cpp
+            ENTRY test_me
+            LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+            RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+            EXPECTED_EXIT_CODE 4919
+        )
+
+        add_cpp_lifting_test(
+            NAME global_var
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var.cpp
             ENTRY test_me
             LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
             RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
