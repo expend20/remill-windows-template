@@ -60,10 +60,13 @@ else()
     include(add_asm_lifting_test)
     include(add_cpp_lifting_test)
 
+    # Shared lifter executable for all tests
+    add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp)
+    target_link_libraries(lifter PRIVATE lifting_common)
+
     add_asm_lifting_test(
         NAME mov_const
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/mov_const.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -71,7 +74,6 @@ else()
     add_asm_lifting_test(
         NAME or_const
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/or_const.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -79,7 +81,6 @@ else()
     add_asm_lifting_test(
         NAME global_var_write
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_write.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -87,7 +88,6 @@ else()
     add_asm_lifting_test(
         NAME unaligned_read
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_read.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -95,7 +95,6 @@ else()
     add_asm_lifting_test(
         NAME stack_var_write
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_var_write.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -103,7 +102,6 @@ else()
     add_asm_lifting_test(
         NAME unaligned_stack_read
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_stack_read.asm
-        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
@@ -115,7 +113,6 @@ else()
             NAME ret_const
             CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/ret_const.cpp
             ENTRY test_me
-            LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
             RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
             EXPECTED_EXIT_CODE 4919
         )
@@ -124,7 +121,6 @@ else()
             NAME global_var
             CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var.cpp
             ENTRY test_me
-            LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
             RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
             EXPECTED_EXIT_CODE 4919
         )
@@ -154,7 +150,6 @@ else()
                 CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_pluto.cpp
                 ENTRY test_me
                 PASSES "pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution"
-                LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
                 RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
                 EXPECTED_EXIT_CODE 4919
             )

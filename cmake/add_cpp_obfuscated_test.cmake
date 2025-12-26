@@ -3,7 +3,6 @@
 #   CPP <path_to_cpp>
 #   ENTRY <function_name>
 #   PASSES <llvm_passes>
-#   LIFTER_SRC <path_to_lifter_main.cpp>
 #   RUNNER_SRC <path_to_test_main.cpp>
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
@@ -13,11 +12,11 @@
 # 2. Applies obfuscation passes (e.g., pluto-substitution)
 # 3. Compiles obfuscated IR to object file
 # 4. Links to executable
-# 5. Lifts executable back to LLVM IR
+# 5. Lifts executable back to LLVM IR (using shared lifter)
 # 6. Verifies the lifted code produces the expected result
 #
 function(add_cpp_obfuscated_test)
-    cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;PASSES;LIFTER_SRC;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;PASSES;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
 
     set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
@@ -28,10 +27,6 @@ function(add_cpp_obfuscated_test)
     set(EXE_FILE ${BUILD_DIR}/shellcode.exe)
     set(OPTIMIZED_LL ${BUILD_DIR}/test_optimized.ll)
     set(OPTIMIZED_O ${BUILD_DIR}/test_optimized.o)
-
-    # Lifter executable
-    add_executable(${ARG_NAME}_lifter ${ARG_LIFTER_SRC})
-    target_link_libraries(${ARG_NAME}_lifter PRIVATE lifting_common)
 
     # Step 1: Generate .cpp -> .ll (unoptimized LLVM IR)
     add_custom_command(
@@ -75,15 +70,15 @@ function(add_cpp_obfuscated_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Step 5: Lift .exe -> .ll/.bc
+    # Step 5: Lift .exe -> .ll/.bc (using shared lifter)
     add_custom_command(
         OUTPUT
             ${OPTIMIZED_LL}
             ${BUILD_DIR}/test_optimized.bc
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
-        COMMAND ${ARG_NAME}_lifter ${EXE_FILE}
-        DEPENDS ${ARG_NAME}_lifter ${EXE_FILE}
+        COMMAND lifter ${EXE_FILE}
+        DEPENDS lifter ${EXE_FILE}
         COMMENT "[${ARG_NAME}] Lifting..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )

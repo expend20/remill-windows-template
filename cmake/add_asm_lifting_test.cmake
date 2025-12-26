@@ -1,12 +1,12 @@
 # add_asm_lifting_test(
 #   NAME <test_name>
 #   ASM <path_to_asm>
-#   LIFTER_SRC <path_to_lifter_main.cpp>
 #   RUNNER_SRC <path_to_test_main.cpp>
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
+# Note: Uses the shared 'lifter' target defined in CMakeLists.txt
 function(add_asm_lifting_test)
-    cmake_parse_arguments(ARG "" "NAME;ASM;LIFTER_SRC;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "NAME;ASM;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
 
     set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
@@ -15,10 +15,6 @@ function(add_asm_lifting_test)
     set(EXE_FILE ${BUILD_DIR}/shellcode.exe)
     set(OPTIMIZED_LL ${BUILD_DIR}/test_optimized.ll)
     set(OPTIMIZED_O ${BUILD_DIR}/test_optimized.o)
-
-    # Lifter executable
-    add_executable(${ARG_NAME}_lifter ${ARG_LIFTER_SRC})
-    target_link_libraries(${ARG_NAME}_lifter PRIVATE lifting_common)
 
     # Assemble .asm -> .obj
     add_custom_command(
@@ -39,15 +35,15 @@ function(add_asm_lifting_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Lift .exe -> .ll/.bc
+    # Lift .exe -> .ll/.bc (using shared lifter)
     add_custom_command(
         OUTPUT
             ${OPTIMIZED_LL}
             ${BUILD_DIR}/test_optimized.bc
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
-        COMMAND ${ARG_NAME}_lifter ${EXE_FILE}
-        DEPENDS ${ARG_NAME}_lifter ${EXE_FILE}
+        COMMAND lifter ${EXE_FILE}
+        DEPENDS lifter ${EXE_FILE}
         COMMENT "[${ARG_NAME}] Lifting..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )
