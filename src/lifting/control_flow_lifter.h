@@ -27,8 +27,11 @@ class ControlFlowLifter {
   explicit ControlFlowLifter(LiftingContext &ctx);
 
   // Decode and analyze control flow, then lift all instructions
-  // Returns the entry basic block of the lifted function
-  bool LiftFunction(uint64_t start_address, const uint8_t *bytes, size_t size,
+  // code_base: start of the code region (for scanning all instructions)
+  // entry_point: the function's entry point address
+  // Returns true on success
+  bool LiftFunction(uint64_t code_base, uint64_t entry_point,
+                    const uint8_t *bytes, size_t size,
                     llvm::Function *func);
 
  private:
@@ -44,7 +47,7 @@ class ControlFlowLifter {
 
   // Finish a basic block with appropriate terminator
   void FinishBlock(llvm::BasicBlock *block, const DecodedInstruction &last_instr,
-                   uint64_t next_addr);
+                   uint64_t next_addr, uint64_t block_addr);
 
   LiftingContext &ctx_;
   remill::DecodingContext decoding_context_;
@@ -61,6 +64,17 @@ class ControlFlowLifter {
   // Range of valid code addresses
   uint64_t code_start_ = 0;
   uint64_t code_end_ = 0;
+
+  // Entry point address (may differ from code_start_)
+  uint64_t entry_point_ = 0;
+
+  // Call return addresses mapped to their continuation blocks
+  // Used by RET to dispatch back to the correct call site
+  std::map<uint64_t, llvm::BasicBlock *> return_blocks_;
+
+  // Set of block addresses that are call targets (i.e., helper functions)
+  // RETs in these blocks should dispatch back to callers
+  std::set<uint64_t> call_targets_;
 };
 
 }  // namespace lifting

@@ -55,15 +55,16 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // Calculate start address: ImageBase + .text RVA
-  uint64_t start_address = pe_info->image_base + text_section->virtual_address;
+  // Calculate addresses
+  uint64_t code_base = pe_info->image_base + text_section->virtual_address;
+  uint64_t entry_point = pe_info->image_base + pe_info->entry_point_rva;
 
   // Create lifted function in semantics module (required by remill's instruction lifter)
   auto *lifted_func = ctx.DefineLiftedFunction("lifted_ret_with_code");
 
   // Use control flow-aware lifter to handle jumps and loops
   lifting::ControlFlowLifter lifter(ctx);
-  if (!lifter.LiftFunction(start_address, text_section->bytes.data(),
+  if (!lifter.LiftFunction(code_base, entry_point, text_section->bytes.data(),
                            text_section->bytes.size(), lifted_func)) {
     std::cerr << "Failed to lift instructions\n";
     return EXIT_FAILURE;
@@ -75,7 +76,7 @@ int main(int argc, char **argv) {
   // Create wrapper function
   lifting::WrapperBuilder wrapper_builder(ctx);
   auto *wrapper = wrapper_builder.CreateInt32ReturnWrapper(
-      "test", lifted_func, start_address);
+      "test", lifted_func, entry_point);
 
   // Create backing globals from PE sections
   auto memory_info = lifting::CreateMemoryGlobals(ctx.GetSemanticsModule(), *pe_info);

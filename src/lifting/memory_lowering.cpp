@@ -25,9 +25,11 @@ MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
 
 std::pair<llvm::AllocaInst *, uint64_t>
 StackBackingInfo::FindStackOffset(uint64_t va) const {
-  // Stack range: [stack_top_va - stack_size, stack_top_va)
+  // Stack range: [stack_top_va - stack_size, stack_top_va + caller_space)
+  // The caller_space bytes are above stack_top_va for main's RET to read
   uint64_t stack_bottom = stack_top_va - stack_size;
-  if (va >= stack_bottom && va < stack_top_va) {
+  uint64_t stack_end = stack_top_va + caller_space;
+  if (va >= stack_bottom && va < stack_end) {
     // Offset from bottom of stack (array index 0 is at lowest address)
     uint64_t offset = va - stack_bottom;
     return {stack_alloca, offset};
@@ -41,19 +43,24 @@ StackBackingInfo CreateStackAlloca(llvm::Function *func,
   auto &context = func->getContext();
   llvm::IRBuilder<> builder(&func->getEntryBlock().front());
 
-  // Create [stack_size x i8] alloca for stack memory
-  auto *arr_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(context), stack_size);
+  // Allocate extra space above initial_rsp for "caller's frame"
+  // This handles main's RET reading from [RSP] when RSP == initial_rsp
+  constexpr uint64_t caller_space = 8;  // 8 bytes for return address slot
+  uint64_t total_size = stack_size + caller_space;
+
+  // Create [total_size x i8] alloca for stack memory
+  auto *arr_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(context), total_size);
   auto *alloca = builder.CreateAlloca(arr_type, nullptr, "__stack_local");
 
   // Zero initialize the stack (use align 1 to match alloca alignment)
-  auto *size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), stack_size);
+  auto *size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), total_size);
   builder.CreateMemSet(alloca, builder.getInt8(0), size, llvm::MaybeAlign(1));
 
   std::cout << "Created stack alloca: " << stack_size << " bytes at VA range 0x"
             << std::hex << (initial_rsp - stack_size) << "-0x" << initial_rsp
             << std::dec << "\n";
 
-  return {alloca, initial_rsp, stack_size};
+  return {alloca, initial_rsp, stack_size, caller_space};
 }
 
 MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,

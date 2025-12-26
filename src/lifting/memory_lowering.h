@@ -39,9 +39,10 @@ struct StackBackingInfo {
   llvm::AllocaInst *stack_alloca;  // The stack byte array
   uint64_t stack_top_va;           // Initial RSP value (high end)
   uint64_t stack_size;             // Size of stack in bytes
+  uint64_t caller_space;           // Extra bytes above stack_top_va for caller's frame
 
   // Find stack alloca and offset for a virtual address in stack range
-  // Stack range is [stack_top_va - stack_size, stack_top_va)
+  // Stack range is [stack_top_va - stack_size, stack_top_va + caller_space)
   // Returns {nullptr, 0} if address not in stack range
   std::pair<llvm::AllocaInst *, uint64_t> FindStackOffset(uint64_t va) const;
 };

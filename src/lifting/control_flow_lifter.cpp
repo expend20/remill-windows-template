@@ -11,27 +11,52 @@ namespace lifting {
 ControlFlowLifter::ControlFlowLifter(LiftingContext &ctx)
     : ctx_(ctx), decoding_context_(ctx.GetArch()->CreateInitialContext()) {}
 
-bool ControlFlowLifter::LiftFunction(uint64_t start_address,
+bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
                                       const uint8_t *bytes, size_t size,
                                       llvm::Function *func) {
   // Clear state from any previous lifts
   instructions_.clear();
   block_starts_.clear();
   blocks_.clear();
+  return_blocks_.clear();
+  call_targets_.clear();
 
-  code_start_ = start_address;
-  code_end_ = start_address + size;
+  code_start_ = code_base;
+  code_end_ = code_base + size;
+  entry_point_ = entry_point;
 
   // First pass: decode all instructions and discover basic block boundaries
-  if (!DiscoverBasicBlocks(start_address, bytes, size)) {
+  if (!DiscoverBasicBlocks(code_base, bytes, size)) {
     return false;
   }
+
+  // Ensure entry point is a block start
+  block_starts_.insert(entry_point);
 
   // Create LLVM basic blocks
   CreateBasicBlocks(func);
 
+  // Pre-create return continuation blocks for all internal calls
+  // This needs to happen before LiftBlocks so RET can use them
+  for (const auto &[addr, decoded] : instructions_) {
+    if (decoded.instr.category == remill::Instruction::kCategoryDirectFunctionCall) {
+      uint64_t target = decoded.instr.branch_taken_pc;
+      uint64_t return_addr = addr + decoded.size;
+      if (blocks_.count(target) && blocks_.count(return_addr)) {
+        // Internal call - create return continuation block
+        auto &context = ctx_.GetContext();
+        std::string name = "ret_" + std::to_string(return_addr);
+        auto *ret_block = llvm::BasicBlock::Create(context, name, func);
+        return_blocks_[return_addr] = ret_block;
+
+        // Mark the target as a call target (its RET should dispatch)
+        call_targets_.insert(target);
+      }
+    }
+  }
+
   // Lift instructions into their respective blocks
-  if (!LiftBlocks(bytes, size, start_address)) {
+  if (!LiftBlocks(bytes, size, code_base)) {
     return false;
   }
 
@@ -100,6 +125,19 @@ bool ControlFlowLifter::DiscoverBasicBlocks(uint64_t start_address,
         break;
       }
 
+      case remill::Instruction::kCategoryDirectFunctionCall: {
+        // Direct function call: target and return address are block starts
+        uint64_t target = decoded.instr.branch_taken_pc;
+        if (target >= code_start_ && target < code_end_) {
+          block_starts_.insert(target);
+        }
+        // Fall-through (return address) is also a block start
+        if (next_addr < code_end_) {
+          block_starts_.insert(next_addr);
+        }
+        break;
+      }
+
       case remill::Instruction::kCategoryFunctionReturn:
         // Return ends the block, next instruction (if any) starts a new block
         if (next_addr < code_end_) {
@@ -127,15 +165,13 @@ void ControlFlowLifter::CreateBasicBlocks(llvm::Function *func) {
   auto &context = ctx_.GetContext();
 
   // The function already has an entry block with allocas from DefineLiftedFunction
-  // Use it for the first basic block
-  bool first = true;
+  // Use it for the entry point block
   for (uint64_t addr : block_starts_) {
-    if (first) {
-      // Use the existing entry block for the first basic block
+    if (addr == entry_point_) {
+      // Use the existing entry block for the entry point
       auto *entry = &func->getEntryBlock();
       entry->setName("bb_" + std::to_string(addr));
       blocks_[addr] = entry;
-      first = false;
     } else {
       std::string name = "bb_" + std::to_string(addr);
       auto *block = llvm::BasicBlock::Create(context, name, func);
@@ -189,7 +225,7 @@ bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
 
     // Finish the block with appropriate terminator
     if (last_instr) {
-      FinishBlock(block, *last_instr, addr);
+      FinishBlock(block, *last_instr, addr, block_addr);
     }
   }
 
@@ -198,7 +234,7 @@ bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
 
 void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
                                      const DecodedInstruction &last_instr,
-                                     uint64_t next_addr) {
+                                     uint64_t next_addr, uint64_t block_addr) {
   llvm::IRBuilder<> builder(block);
   auto *intrinsics = ctx_.GetIntrinsics();
 
@@ -256,10 +292,88 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
       break;
     }
 
-    case remill::Instruction::kCategoryFunctionReturn:
-      // Return from function
-      builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+    case remill::Instruction::kCategoryDirectFunctionCall: {
+      // Direct function call - branch to target and set up return
+      uint64_t target = last_instr.instr.branch_taken_pc;
+
+      if (blocks_.count(target) && return_blocks_.count(next_addr)) {
+        // Internal call - branch to target block
+        // Use the pre-created continuation block
+        auto *ret_block = return_blocks_[next_addr];
+
+        // Branch to call target
+        builder.CreateBr(blocks_[target]);
+
+        // Fill in the continuation block - branch to the code after the call
+        llvm::IRBuilder<> ret_builder(ret_block);
+        if (blocks_.count(next_addr)) {
+          ret_builder.CreateBr(blocks_[next_addr]);
+        } else {
+          ret_builder.CreateRet(remill::LoadMemoryPointer(ret_block, *intrinsics));
+        }
+      } else {
+        // External call - just continue to next instruction
+        if (blocks_.count(next_addr)) {
+          builder.CreateBr(blocks_[next_addr]);
+        } else {
+          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+        }
+      }
       break;
+    }
+
+    case remill::Instruction::kCategoryFunctionReturn: {
+      // Return from function
+      // Only dispatch if this block is part of a called helper function
+      // A block is a helper if:
+      // 1. It's a call target entry point, OR
+      // 2. It's before the main entry point (helpers typically come first)
+      bool is_helper = call_targets_.count(block_addr) || block_addr < entry_point_;
+
+      if (return_blocks_.empty() || !is_helper) {
+        // No internal callers OR this is main's RET - just return from LLVM function
+        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+      } else {
+        // Dispatch based on return address stored in NEXT_PC by RET semantic
+        // Find the NEXT_PC alloca
+        llvm::AllocaInst *next_pc = nullptr;
+        for (auto &inst : block->getParent()->getEntryBlock()) {
+          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+            if (alloca->getName() == "NEXT_PC") {
+              next_pc = alloca;
+              break;
+            }
+          }
+        }
+
+        if (next_pc) {
+          // Load the return address from NEXT_PC (set by RET semantic)
+          auto *ret_addr = builder.CreateLoad(builder.getInt64Ty(), next_pc);
+
+          // Create default block that returns from LLVM function
+          // This handles main function's RET (with invalid return address)
+          auto &context = ctx_.GetContext();
+          auto *default_block = llvm::BasicBlock::Create(
+              context, "ret_default", block->getParent());
+          llvm::IRBuilder<> default_builder(default_block);
+          default_builder.CreateRet(remill::LoadMemoryPointer(default_block, *intrinsics));
+
+          // Create switch to dispatch to known return addresses
+          auto *switch_inst = builder.CreateSwitch(
+              ret_addr, default_block, return_blocks_.size());
+
+          for (const auto &[addr, ret_block] : return_blocks_) {
+            switch_inst->addCase(
+                llvm::ConstantInt::get(builder.getInt64Ty(), addr),
+                ret_block);
+          }
+        } else {
+          // Fallback - just return
+          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+        }
+      }
+      break;
+    }
 
     default:
       // Normal instruction - fall through to next block or return
