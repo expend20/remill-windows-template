@@ -17,7 +17,7 @@ add_library(lifting_common STATIC
     src/lifting/lifting_context.cpp
     src/lifting/instruction_lifter.cpp
     src/lifting/wrapper_builder.cpp
-    src/lifting/memory_provider.cpp
+    src/lifting/memory_lowering.cpp
     src/optimization/optimizer.cpp
     src/utils/module_utils.cpp
     src/utils/pe_reader.cpp
@@ -71,6 +71,22 @@ else()
     add_asm_lifting_test(
         NAME or_const
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/or_const.asm
+        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_var_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_write.asm
+        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME unaligned_read
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_read.asm
         LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919

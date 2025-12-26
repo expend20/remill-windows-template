@@ -12,7 +12,7 @@
 
 #include "lifting/lifting_context.h"
 #include "lifting/instruction_lifter.h"
-#include "lifting/memory_provider.h"
+#include "lifting/memory_lowering.h"
 #include "lifting/wrapper_builder.h"
 #include "optimization/optimizer.h"
 #include "utils/module_utils.h"
@@ -81,16 +81,17 @@ int main(int argc, char **argv) {
   auto *wrapper = wrapper_builder.CreateInt32ReturnWrapper(
       "test", lifted_func, start_address);
 
-  // Create memory provider for data section lookups
-  lifting::PEMemoryProvider memory_provider(*pe_info);
+  // Create backing globals from PE sections
+  auto memory_info = lifting::CreateMemoryGlobals(ctx.GetSemanticsModule(), *pe_info);
 
-  // First optimization pass to fold addresses
+  // First optimization pass to fold addresses and inline
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
 
-  // Replace memory intrinsics with concrete values where possible
-  optimization::ReplaceMemoryIntrinsics(ctx.GetSemanticsModule(), &memory_provider);
+  // Lower memory intrinsics to load/store from local allocas
+  // This allows LLVM's SROA to optimize them as local variables
+  lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info, wrapper);
 
-  // Second optimization pass to fold the resolved constants
+  // Second optimization pass - SROA will break up allocas, mem2reg promotes to SSA
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
 
   // Print result
