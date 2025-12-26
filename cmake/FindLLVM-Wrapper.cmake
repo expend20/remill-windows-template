@@ -47,6 +47,37 @@ else()
     # Filter out shared libraries (LLVM-C, LTO, Remarks) to use only static libs
     set(LLVM-Wrapper_LIBS ${LLVM_AVAILABLE_LIBS})
     list(FILTER LLVM-Wrapper_LIBS EXCLUDE REGEX "^(LLVM-C|LTO|Remarks)$")
+
+    # Fallback: if LLVM_AVAILABLE_LIBS is empty (installed LLVM), use explicit components
+    if(NOT LLVM-Wrapper_LIBS)
+        llvm_map_components_to_libnames(LLVM-Wrapper_LIBS
+            # Core components
+            Support Core IRReader BitReader BitWriter Passes
+            Analysis TransformUtils ScalarOpts InstCombine
+            AggressiveInstCombine Vectorize IPO
+            BitstreamReader AsmParser
+            # Code generation
+            CodeGen CodeGenTypes SelectionDAG AsmPrinter GlobalISel MIRParser
+            Target MC MCParser MCDisassembler
+            # Target architectures (needed by remill)
+            AArch64CodeGen AArch64AsmParser AArch64Desc AArch64Info AArch64Disassembler AArch64Utils
+            ARMCodeGen ARMAsmParser ARMDesc ARMInfo ARMDisassembler ARMUtils
+            X86CodeGen X86AsmParser X86Desc X86Info X86Disassembler
+            SparcCodeGen SparcAsmParser SparcDesc SparcInfo SparcDisassembler
+            NVPTXCodeGen NVPTXDesc NVPTXInfo
+            WebAssemblyCodeGen WebAssemblyDesc WebAssemblyInfo WebAssemblyUtils
+            # Execution
+            Interpreter MCJIT ExecutionEngine RuntimeDyld OrcJIT OrcShared OrcTargetProcess JITLink
+            # Other required components
+            Object BinaryFormat DebugInfoDWARF DebugInfoCodeView DebugInfoPDB Demangle Remarks
+            TargetParser Instrumentation CFGuard ProfileData
+            FrontendOpenMP FrontendOffloading Coroutines Extensions ObjCARCOpts
+            Linker IRPrinter TextAPI Option LTO WindowsManifest HipStdPar
+        )
+        if(NOT LLVM-Wrapper_FIND_QUIETLY)
+            message(STATUS "Using explicit LLVM components (LLVM_AVAILABLE_LIBS was empty)")
+        endif()
+    endif()
 endif()
 
 # Some diagnostics (https://stackoverflow.com/a/17666004/1806760)
@@ -76,6 +107,8 @@ endif()
 
 if(WIN32)
     target_compile_definitions(LLVM-Wrapper INTERFACE NOMINMAX)
+    # LLVM on Windows needs ntdll for RtlGetLastNtStatus
+    target_link_libraries(LLVM-Wrapper INTERFACE ntdll)
 
     # This target has an unnecessary diaguids.lib embedded in the installation
     if(TARGET LLVMDebugInfoPDB)
