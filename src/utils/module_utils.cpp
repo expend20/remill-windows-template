@@ -180,7 +180,8 @@ std::unique_ptr<llvm::Module> CreateCleanModule(
     builder.CreateRet(
         llvm::ConstantInt::get(func_type->getReturnType(), return_value->getValue()));
   } else {
-    // Return 0 as fallback
+    // Return 0 as fallback - for non-constant cases, the caller should
+    // use the extracted module directly instead of CreateCleanModule
     builder.CreateRet(llvm::ConstantInt::get(func_type->getReturnType(), 0));
   }
 

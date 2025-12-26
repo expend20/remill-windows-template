@@ -35,7 +35,10 @@
       "Bash(PLUTO_SEED=0x17BA961F cmake --build:*)",
       "Bash(../../../build/unaligned_read_lifter.exe shellcode.exe)",
       "Bash(../../../build/unaligned_stack_read_lifter.exe shellcode.exe)",
-      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)"
+      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)",
+      "Bash(ml64:*)",
+      "Bash(../../../build/lifter.exe shellcode.exe)",
+      "Bash(../../../dependencies/install/bin/opt.exe:*)"
     ]
   }
 }

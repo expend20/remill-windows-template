@@ -16,6 +16,7 @@ find_package(remill REQUIRED)
 add_library(lifting_common STATIC
     src/lifting/lifting_context.cpp
     src/lifting/instruction_lifter.cpp
+    src/lifting/control_flow_lifter.cpp
     src/lifting/wrapper_builder.cpp
     src/lifting/memory_lowering.cpp
     src/optimization/optimizer.cpp
@@ -102,6 +103,13 @@ else()
     add_asm_lifting_test(
         NAME unaligned_stack_read
         ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_stack_read.asm
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME loop_sum
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/loop_sum.asm
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )

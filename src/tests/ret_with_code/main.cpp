@@ -12,7 +12,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "lifting/lifting_context.h"
-#include "lifting/instruction_lifter.h"
+#include "lifting/control_flow_lifter.h"
 #include "lifting/memory_lowering.h"
 #include "lifting/wrapper_builder.h"
 #include "optimization/optimizer.h"
@@ -60,19 +60,14 @@ int main(int argc, char **argv) {
 
   // Create lifted function in semantics module (required by remill's instruction lifter)
   auto *lifted_func = ctx.DefineLiftedFunction("lifted_ret_with_code");
-  auto *block = &lifted_func->getEntryBlock();
 
-  // Lift all instructions
-  lifting::InstructionLifter lifter(ctx);
-  if (!lifter.LiftInstructionsImpl(start_address, text_section->bytes.data(),
-                                   text_section->bytes.size(), block)) {
+  // Use control flow-aware lifter to handle jumps and loops
+  lifting::ControlFlowLifter lifter(ctx);
+  if (!lifter.LiftFunction(start_address, text_section->bytes.data(),
+                           text_section->bytes.size(), lifted_func)) {
     std::cerr << "Failed to lift instructions\n";
     return EXIT_FAILURE;
   }
-
-  // Finish the lifted block
-  llvm::IRBuilder<> ir(block);
-  ir.CreateRet(remill::LoadMemoryPointer(block, *ctx.GetIntrinsics()));
 
   // Prepare lifted function for inlining
   lifting::WrapperBuilder::PrepareForInlining(lifted_func);
@@ -121,16 +116,18 @@ int main(int argc, char **argv) {
   auto opt_module = utils::ExtractFunctions(
       ctx.GetSemanticsModule(), {"test"}, "test_optimized");
 
-  // Second optimization pass on the extracted module
-  auto *opt_func = opt_module->getFunction("test");
-  optimization::OptimizeForCleanIR(opt_module.get(), opt_func);
+  // Remove flag computation intrinsics that block loop optimization
+  // These are identity functions used for debugging
+  optimization::RemoveFlagComputationIntrinsics(opt_module.get());
 
-  // Create final clean module with just the constant return
-  auto clean_module = utils::CreateCleanModule(
-      ctx.GetContext(), opt_func, "test_optimized",
-      ctx.GetSemanticsModule()->getTargetTriple(),
-      ctx.GetSemanticsModule()->getDataLayout());
-  utils::WriteModule(clean_module.get(), "test_optimized");
+  // Debug: dump module after intrinsic removal
+  utils::WriteLLFile(opt_module.get(), "after_intrinsic_removal.ll");
+
+  // Run full O3 optimization to fold loops and constant propagation
+  optimization::OptimizeAggressive(opt_module.get());
+
+  // Write the optimized module
+  utils::WriteModule(opt_module.get(), "test_optimized");
 
   return EXIT_SUCCESS;
 }
