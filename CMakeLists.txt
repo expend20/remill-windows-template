@@ -102,11 +102,13 @@ else()
             message(STATUS "Found opt: ${LLVM_OPT_EXECUTABLE}")
 
             # Z3 bin directory for runtime DLL loading (libz3.dll)
-            # Derive from LLVM_Z3_INSTALL_DIR or use default
+            # Derive from LLVM_Z3_INSTALL_DIR or use superbuild location
             if(LLVM_Z3_INSTALL_DIR)
                 set(Z3_BIN_DIR "${LLVM_Z3_INSTALL_DIR}/bin" CACHE PATH "Z3 bin directory")
             else()
-                set(Z3_BIN_DIR "C:/z3/bin" CACHE PATH "Z3 bin directory")
+                # Default to superbuild location
+                list(GET CMAKE_PREFIX_PATH 0 _first_prefix)
+                set(Z3_BIN_DIR "${_first_prefix}/bin" CACHE PATH "Z3 bin directory")
             endif()
             message(STATUS "Z3 bin directory: ${Z3_BIN_DIR}")
 

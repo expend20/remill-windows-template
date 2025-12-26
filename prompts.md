@@ -82,3 +82,7 @@ add this project as a submodule https://github.com/expend20/llvm-ob-passes get a
 It has obfuscation passes for .ll files. 
 Add a new .cpp test based off global_var.cpp, but now use Pluto substitution pass before .ll gets compiled into .exe.
 let's see if it works, it should get optimized into the same result (0x1337 value)
+
+---
+
+Z3 is now required to be externally installed, but remill uses superbuild to handle dependencies, can you also use superbuild for z3?
