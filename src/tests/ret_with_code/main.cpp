@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
   // Calculate start address: ImageBase + .text RVA
   uint64_t start_address = pe_info->image_base + text_section->virtual_address;
 
-  // Create lifted function
+  // Create lifted function in semantics module (required by remill's instruction lifter)
   auto *lifted_func = ctx.DefineLiftedFunction("lifted_ret_with_code");
   auto *block = &lifted_func->getEntryBlock();
 
@@ -84,6 +84,14 @@ int main(int argc, char **argv) {
   // Create backing globals from PE sections
   auto memory_info = lifting::CreateMemoryGlobals(ctx.GetSemanticsModule(), *pe_info);
 
+  // Extract just the lifted functions to a separate module (for debugging)
+  // This gives us a small "lifted.ll" without the full 7MB runtime
+  auto extracted_module = utils::ExtractFunctions(
+      ctx.GetSemanticsModule(),
+      {"test", "lifted_ret_with_code"},
+      "lifted_code");
+  utils::WriteModule(extracted_module.get(), "lifted");
+
   // First optimization pass to fold addresses and inline
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
 
@@ -94,20 +102,12 @@ int main(int argc, char **argv) {
   // Second optimization pass - SROA will break up allocas, mem2reg promotes to SSA
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
 
-  // Print result
-  std::cout << "[Optimized IR]\n";
-  wrapper->print(llvm::outs());
-  std::cout << "\n";
-
   // Write clean optimized module
   auto clean_module = utils::CreateCleanModule(
       ctx.GetContext(), wrapper, "test_optimized",
       ctx.GetSemanticsModule()->getTargetTriple(),
       ctx.GetSemanticsModule()->getDataLayout());
   utils::WriteModule(clean_module.get(), "test_optimized");
-
-  // Also write full semantics module (for reference)
-  utils::WriteModule(ctx.GetSemanticsModule(), "lifted");
 
   return EXIT_SUCCESS;
 }

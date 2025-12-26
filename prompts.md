@@ -89,4 +89,12 @@ Z3 is now required to be externally installed, but remill uses superbuild to han
 
 ---
 
-Create a new test similar to global_var_pluto_sub_5x.cpp. Take the source from src\deps\llvm-ob-passes\tests\test.c, but adapt it (remove printf, etc), encrypt and decrypt 0x1337 int and return it. Don't apply obfuscation passes just yet, let's see if xtea with constat values gets optimized away.
+
+
+---
+
+Xtea test. Create a new test similar to global_var_pluto_sub_5x.cpp. Take the source from src\deps\llvm-ob-passes\tests\test.c, but adapt it (remove printf, etc), encrypt and decrypt 0x1337 int and return it. Don't apply obfuscation passes just yet, let's see if xtea with constat values gets optimized away.
+
+---
+
+create new test like mov_const.asm, I need there a write to a global variable be tested

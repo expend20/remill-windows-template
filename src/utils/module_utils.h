@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -15,6 +16,13 @@ std::unique_ptr<llvm::Module> CreateCleanModule(llvm::LLVMContext &context,
                                                  const std::string &module_name,
                                                  const std::string &target_triple,
                                                  const llvm::DataLayout &data_layout);
+
+// Extract specified functions and their dependencies into a new module
+// This is useful for extracting just the lifted code from the semantics module
+std::unique_ptr<llvm::Module> ExtractFunctions(
+    llvm::Module *source_module,
+    const std::vector<std::string> &function_names,
+    const std::string &module_name);
 
 // Write a module to .ll and .bc files
 // Returns true on success
