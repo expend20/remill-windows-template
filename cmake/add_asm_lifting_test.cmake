@@ -60,6 +60,7 @@ function(add_asm_lifting_test)
 
     # Runner executable
     add_executable(${ARG_NAME}_runner ${ARG_RUNNER_SRC})
+    set_target_properties(${ARG_NAME}_runner PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BUILD_DIR})
     add_dependencies(${ARG_NAME}_runner ${ARG_NAME}_object)
     target_link_libraries(${ARG_NAME}_runner PRIVATE ${OPTIMIZED_O})
 
