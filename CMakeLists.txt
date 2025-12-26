@@ -35,6 +35,7 @@ target_link_libraries(lifting_common PUBLIC
 # Find tools for tests
 find_program(CLANG_EXECUTABLE clang HINTS "${LLVM_TOOLS_BINARY_DIR}")
 find_program(CLANG_CL_EXECUTABLE clang-cl HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
+find_program(LLVM_OPT_EXECUTABLE opt HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
 find_program(ML64_EXECUTABLE ml64)
 if(ML64_EXECUTABLE)
     get_filename_component(ML64_DIR "${ML64_EXECUTABLE}" DIRECTORY)
@@ -95,6 +96,37 @@ else()
             RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
             EXPECTED_EXIT_CODE 4919
         )
+
+        # Obfuscation pass tests (require opt and llvm-ob-passes)
+        if(LLVM_OPT_EXECUTABLE)
+            message(STATUS "Found opt: ${LLVM_OPT_EXECUTABLE}")
+
+            # Z3 bin directory for runtime DLL loading (libz3.dll)
+            # Derive from LLVM_Z3_INSTALL_DIR or use default
+            if(LLVM_Z3_INSTALL_DIR)
+                set(Z3_BIN_DIR "${LLVM_Z3_INSTALL_DIR}/bin" CACHE PATH "Z3 bin directory")
+            else()
+                set(Z3_BIN_DIR "C:/z3/bin" CACHE PATH "Z3 bin directory")
+            endif()
+            message(STATUS "Z3 bin directory: ${Z3_BIN_DIR}")
+
+            # Build llvm-ob-passes plugin
+            add_subdirectory(src/deps/llvm-ob-passes)
+
+            include(add_cpp_obfuscated_test)
+
+            add_cpp_obfuscated_test(
+                NAME global_var_pluto
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_pluto.cpp
+                ENTRY test_me
+                PASSES "pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution"
+                LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+        else()
+            message(STATUS "opt not found, obfuscation tests will not be available")
+        endif()
     else()
         message(STATUS "clang-cl not found, C++ tests will not be available")
     endif()

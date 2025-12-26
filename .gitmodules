@@ -1,3 +1,6 @@
 [submodule "src/deps/remill"]
 	path = src/deps/remill
 	url = https://github.com/lifting-bits/remill
+[submodule "src/deps/llvm-ob-passes"]
+	path = src/deps/llvm-ob-passes
+	url = https://github.com/expend20/llvm-ob-passes

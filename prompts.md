@@ -74,6 +74,11 @@ this will probably break multiple things:
   - update pe64 reader to cover this case
 - lifter should be able to read the instruction as well as the constant memory it references, so in the end it should be optimized to exactly the same output as existing .cpp test (just returning 0x1337 value)
 
+federated-meandering-wind.md
+
 ---
 
-add this project as a submodule https://github.com/expend20/llvm-ob-passes use passe
+add this project as a submodule https://github.com/expend20/llvm-ob-passes get a grasp of it. 
+It has obfuscation passes for .ll files. 
+Add a new .cpp test based off global_var.cpp, but now use Pluto substitution pass before .ll gets compiled into .exe.
+let's see if it works, it should get optimized into the same result (0x1337 value)
