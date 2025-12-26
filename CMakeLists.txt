@@ -92,6 +92,22 @@ else()
         EXPECTED_EXIT_CODE 4919
     )
 
+    add_asm_lifting_test(
+        NAME stack_var_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_var_write.asm
+        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME unaligned_stack_read
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_stack_read.asm
+        LIFTER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
 

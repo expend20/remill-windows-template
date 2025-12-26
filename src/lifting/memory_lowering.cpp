@@ -23,6 +23,39 @@ MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
   return {nullptr, 0};
 }
 
+std::pair<llvm::AllocaInst *, uint64_t>
+StackBackingInfo::FindStackOffset(uint64_t va) const {
+  // Stack range: [stack_top_va - stack_size, stack_top_va)
+  uint64_t stack_bottom = stack_top_va - stack_size;
+  if (va >= stack_bottom && va < stack_top_va) {
+    // Offset from bottom of stack (array index 0 is at lowest address)
+    uint64_t offset = va - stack_bottom;
+    return {stack_alloca, offset};
+  }
+  return {nullptr, 0};
+}
+
+StackBackingInfo CreateStackAlloca(llvm::Function *func,
+                                   uint64_t initial_rsp,
+                                   uint64_t stack_size) {
+  auto &context = func->getContext();
+  llvm::IRBuilder<> builder(&func->getEntryBlock().front());
+
+  // Create [stack_size x i8] alloca for stack memory
+  auto *arr_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(context), stack_size);
+  auto *alloca = builder.CreateAlloca(arr_type, nullptr, "__stack_local");
+
+  // Zero initialize the stack (use align 1 to match alloca alignment)
+  auto *size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), stack_size);
+  builder.CreateMemSet(alloca, builder.getInt8(0), size, llvm::MaybeAlign(1));
+
+  std::cout << "Created stack alloca: " << stack_size << " bytes at VA range 0x"
+            << std::hex << (initial_rsp - stack_size) << "-0x" << initial_rsp
+            << std::dec << "\n";
+
+  return {alloca, initial_rsp, stack_size};
+}
+
 MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,
                                        const utils::PEInfo &pe_info) {
   MemoryBackingInfo info;
@@ -61,6 +94,7 @@ MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,
 
 void LowerMemoryIntrinsics(llvm::Module *module,
                            const MemoryBackingInfo &memory_info,
+                           const StackBackingInfo *stack_info,
                            llvm::Function *target_func) {
   if (!target_func || target_func->empty()) {
     return;
@@ -93,31 +127,49 @@ void LowerMemoryIntrinsics(llvm::Module *module,
     std::cout << "Created local alloca for " << global->getName().str() << "\n";
   }
 
-  struct IntrinsicInfo {
-    const char *name;
-    unsigned size;
-  };
+  // Build a set of memory intrinsic functions to recognize
+  std::set<llvm::Function *> read_intrinsics;
+  std::set<llvm::Function *> write_intrinsics;
 
-  // Process read intrinsics - replace with load from alloca
-  IntrinsicInfo read_intrinsics[] = {
-      {"__remill_read_memory_8", 1},
-      {"__remill_read_memory_16", 2},
-      {"__remill_read_memory_32", 4},
-      {"__remill_read_memory_64", 8},
-  };
+  const char *read_names[] = {
+      "__remill_read_memory_8", "__remill_read_memory_16",
+      "__remill_read_memory_32", "__remill_read_memory_64"};
+  const char *write_names[] = {
+      "__remill_write_memory_8", "__remill_write_memory_16",
+      "__remill_write_memory_32", "__remill_write_memory_64"};
 
-  for (const auto &info : read_intrinsics) {
-    auto *func = module->getFunction(info.name);
-    if (!func) {
-      continue;
+  for (const char *name : read_names) {
+    if (auto *f = module->getFunction(name)) {
+      read_intrinsics.insert(f);
     }
+  }
+  for (const char *name : write_names) {
+    if (auto *f = module->getFunction(name)) {
+      write_intrinsics.insert(f);
+    }
+  }
 
-    for (auto &use : llvm::make_early_inc_range(func->uses())) {
-      auto *call = llvm::dyn_cast<llvm::CallInst>(use.getUser());
-      if (!call || call->getCalledFunction() != func) {
-        continue;
+  // Process all instructions in program order to preserve memory semantics
+  // This is critical for correctness: stores must happen before subsequent loads
+  std::vector<llvm::CallInst *> to_process;
+  for (auto &bb : *target_func) {
+    for (auto &inst : bb) {
+      if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+        auto *callee = call->getCalledFunction();
+        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+          to_process.push_back(call);
+        }
       }
+    }
+  }
 
+  // Now process in program order
+  for (auto *call : to_process) {
+    auto *callee = call->getCalledFunction();
+    bool is_read = read_intrinsics.count(callee) > 0;
+
+    if (is_read) {
+      // Read intrinsic: __remill_read_memory_N(mem, addr) -> value
       if (call->arg_size() < 2) {
         continue;
       }
@@ -127,6 +179,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       if (auto *addr_const = llvm::dyn_cast<llvm::ConstantInt>(addr_arg)) {
         uint64_t address = addr_const->getZExtValue();
+
+        // Try global sections first
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
 
         if (global) {
@@ -135,16 +189,28 @@ void LowerMemoryIntrinsics(llvm::Module *module,
             llvm::IRBuilder<> ir(call);
             auto *alloca = it->second;
 
-            // GEP to the offset within the alloca
             auto *ptr = ir.CreateConstGEP2_64(alloca->getAllocatedType(),
                                               alloca, 0, offset, "mem_ptr");
-
-            // Load the value with appropriate type
             auto *val = ir.CreateLoad(call->getType(), ptr, "mem_val");
 
             replacement = val;
             std::cout << "Lowered read at 0x" << std::hex << address
-                      << " -> load from alloca + " << std::dec << offset << "\n";
+                      << " -> load from global alloca + " << std::dec << offset << "\n";
+          }
+        }
+        // Try stack if global not found
+        else if (stack_info) {
+          auto [stack_alloca, stack_offset] = stack_info->FindStackOffset(address);
+          if (stack_alloca) {
+            llvm::IRBuilder<> ir(call);
+
+            auto *ptr = ir.CreateConstGEP2_64(stack_alloca->getAllocatedType(),
+                                              stack_alloca, 0, stack_offset, "stack_ptr");
+            auto *val = ir.CreateLoad(call->getType(), ptr, "stack_val");
+
+            replacement = val;
+            std::cout << "Lowered read at 0x" << std::hex << address
+                      << " -> load from stack alloca + " << std::dec << stack_offset << "\n";
           }
         }
       }
@@ -156,29 +222,9 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       call->replaceAllUsesWith(replacement);
       call->eraseFromParent();
-    }
-  }
 
-  // Process write intrinsics - replace with store to alloca
-  IntrinsicInfo write_intrinsics[] = {
-      {"__remill_write_memory_8", 1},
-      {"__remill_write_memory_16", 2},
-      {"__remill_write_memory_32", 4},
-      {"__remill_write_memory_64", 8},
-  };
-
-  for (const auto &info : write_intrinsics) {
-    auto *func = module->getFunction(info.name);
-    if (!func) {
-      continue;
-    }
-
-    for (auto &use : llvm::make_early_inc_range(func->uses())) {
-      auto *call = llvm::dyn_cast<llvm::CallInst>(use.getUser());
-      if (!call || call->getCalledFunction() != func) {
-        continue;
-      }
-
+    } else {
+      // Write intrinsic: __remill_write_memory_N(mem, addr, val) -> mem
       if (call->arg_size() < 3) {
         continue;
       }
@@ -189,6 +235,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       if (auto *addr_const = llvm::dyn_cast<llvm::ConstantInt>(addr_arg)) {
         uint64_t address = addr_const->getZExtValue();
+
+        // Try global sections first
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
 
         if (global) {
@@ -197,22 +245,33 @@ void LowerMemoryIntrinsics(llvm::Module *module,
             llvm::IRBuilder<> ir(call);
             auto *alloca = it->second;
 
-            // GEP to the offset within the alloca
             auto *ptr = ir.CreateConstGEP2_64(alloca->getAllocatedType(),
                                               alloca, 0, offset, "mem_ptr");
-
-            // Store the value
             ir.CreateStore(value_arg, ptr);
 
             lowered = true;
             std::cout << "Lowered write at 0x" << std::hex << address
-                      << " -> store to alloca + " << std::dec << offset << "\n";
+                      << " -> store to global alloca + " << std::dec << offset << "\n";
+          }
+        }
+        // Try stack if global not found
+        else if (stack_info) {
+          auto [stack_alloca, stack_offset] = stack_info->FindStackOffset(address);
+          if (stack_alloca) {
+            llvm::IRBuilder<> ir(call);
+
+            auto *ptr = ir.CreateConstGEP2_64(stack_alloca->getAllocatedType(),
+                                              stack_alloca, 0, stack_offset, "stack_ptr");
+            ir.CreateStore(value_arg, ptr);
+
+            lowered = true;
+            std::cout << "Lowered write at 0x" << std::hex << address
+                      << " -> store to stack alloca + " << std::dec << stack_offset << "\n";
           }
         }
       }
 
       // Write intrinsics return the memory pointer (first argument)
-      // Replace uses with that pointer
       call->replaceAllUsesWith(call->getArgOperand(0));
       call->eraseFromParent();
 

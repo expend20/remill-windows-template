@@ -25,13 +25,12 @@ llvm::Function *WrapperBuilder::CreateInt32ReturnWrapper(
   auto *state_type = ctx_.GetStateType();
   auto *state_ptr = builder.CreateAlloca(state_type, nullptr, "state");
 
-  // Initialize RSP (for ret's stack read)
+  // Initialize RSP with a known constant for stack address tracking
+  // Using constant enables memory lowering to recognize stack accesses
   auto *rsp_reg = ctx_.GetRegister("RSP");
   auto *rsp_ptr = rsp_reg->AddressOf(state_ptr, builder);
-  auto *dummy_stack =
-      builder.CreateAlloca(builder.getInt64Ty(), builder.getInt32(16));
   builder.CreateStore(
-      builder.CreatePtrToInt(dummy_stack, builder.getInt64Ty()), rsp_ptr);
+      llvm::ConstantInt::get(builder.getInt64Ty(), INITIAL_RSP), rsp_ptr);
 
   // Call lifted function
   llvm::Value *args[] = {

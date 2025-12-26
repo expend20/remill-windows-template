@@ -9,6 +9,13 @@
 
 namespace lifting {
 
+// Stack memory constants for lifted code
+// Initial RSP value (high address, stack grows down)
+constexpr uint64_t INITIAL_RSP = 0x7FFFFF000000ULL;
+// Maximum stack size - keep small to enable LLVM's SROA optimization
+// Small size (16 bytes) works like global section allocas
+constexpr uint64_t STACK_SIZE = 16ULL;
+
 // Builds wrapper functions that call lifted code with native calling convention
 class WrapperBuilder {
  public:

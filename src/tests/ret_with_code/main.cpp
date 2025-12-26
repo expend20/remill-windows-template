@@ -9,6 +9,7 @@
 #include <remill/BC/Util.h>
 
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include "lifting/lifting_context.h"
 #include "lifting/instruction_lifter.h"
@@ -95,16 +96,38 @@ int main(int argc, char **argv) {
   // First optimization pass to fold addresses and inline
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
 
+  // Create stack alloca for stack memory operations
+  auto stack_info = lifting::CreateStackAlloca(
+      wrapper, lifting::INITIAL_RSP, lifting::STACK_SIZE);
+
   // Lower memory intrinsics to load/store from local allocas
   // This allows LLVM's SROA to optimize them as local variables
-  lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info, wrapper);
+  lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info,
+                                 &stack_info, wrapper);
 
-  // Second optimization pass - SROA will break up allocas, mem2reg promotes to SSA
-  optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
+  // Debug: dump wrapper function after lowering but before second optimization
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream file("after_lowering_wrapper.ll", EC);
+    if (!EC) {
+      wrapper->print(file);
+      file.close();
+      std::cout << "Written: after_lowering_wrapper.ll\n";
+    }
+  }
 
-  // Write clean optimized module
+  // Extract to a clean module for optimization (with full function body)
+  // This avoids interference from other functions in the semantics module
+  auto opt_module = utils::ExtractFunctions(
+      ctx.GetSemanticsModule(), {"test"}, "test_optimized");
+
+  // Second optimization pass on the extracted module
+  auto *opt_func = opt_module->getFunction("test");
+  optimization::OptimizeForCleanIR(opt_module.get(), opt_func);
+
+  // Create final clean module with just the constant return
   auto clean_module = utils::CreateCleanModule(
-      ctx.GetContext(), wrapper, "test_optimized",
+      ctx.GetContext(), opt_func, "test_optimized",
       ctx.GetSemanticsModule()->getTargetTriple(),
       ctx.GetSemanticsModule()->getDataLayout());
   utils::WriteModule(clean_module.get(), "test_optimized");

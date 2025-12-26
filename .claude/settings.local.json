@@ -32,7 +32,10 @@
       "Bash(wc:*)",
       "Bash(PLUTO_SEED=0x17BA961F E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)",
       "Bash(PLUTO_SEED=0x0E932B09 E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)",
-      "Bash(PLUTO_SEED=0x17BA961F cmake --build:*)"
+      "Bash(PLUTO_SEED=0x17BA961F cmake --build:*)",
+      "Bash(../../../build/unaligned_read_lifter.exe shellcode.exe)",
+      "Bash(../../../build/unaligned_stack_read_lifter.exe shellcode.exe)",
+      "Bash(E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)"
     ]
   }
 }

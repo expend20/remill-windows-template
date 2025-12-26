@@ -12,7 +12,9 @@
 #include <llvm/Transforms/Scalar/ADCE.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
+#include <llvm/Transforms/Scalar/DeadStoreElimination.h>
 #include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Scalar/MemCpyOptimizer.h>
 #include <llvm/Transforms/Scalar/SROA.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
@@ -20,6 +22,7 @@
 namespace optimization {
 
 void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
+
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -64,6 +67,15 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
 
   // GVN - can forward stores to loads through memory
   fpm.addPass(llvm::GVNPass());
+
+  // MemCpyOpt - can forward from memset/stores to loads
+  fpm.addPass(llvm::MemCpyOptPass());
+
+  // DSE - dead store elimination
+  fpm.addPass(llvm::DSEPass());
+
+  // Another round of SROA after GVN
+  fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
 
   // Another round of simplification
   fpm.addPass(llvm::InstCombinePass());
