@@ -104,3 +104,79 @@ ret i32 4919  ; 0x1337 - correctly composed from overlapping stores
 - Stack size is fixed at compile time (16 bytes currently)
 - Only handles constant stack addresses (dynamic indexing not supported)
 - Stack grows down from `INITIAL_RSP`
+
+---
+
+## Comparison with McSema
+
+McSema (in `NOT_INTEGRATED/mcsema`) uses a different approach designed for runtime execution rather than compile-time optimization.
+
+### McSema's Approach
+
+**1. Thread-Local Stack Buffer**
+
+McSema allocates a global thread-local stack array at runtime:
+
+```cpp
+// mcsema/BC/Callback.cpp - InitialStackPointerValue()
+auto stack_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(*gContext), num_bytes);
+__mcsema_stack = new llvm::GlobalVariable(
+    *gModule, stack_type, false, llvm::GlobalValue::InternalLinkage,
+    llvm::ConstantAggregateZero::get(stack_type), "__mcsema_stack",
+    nullptr, llvm::GlobalValue::InitialExecTLSModel);
+```
+
+- Size: ~1 MiB (configurable via `explicit_args_stack_size` flag)
+- Thread-local storage (TLS) for multi-threaded support
+- RSP points near the end with 512-byte minimum frame
+
+**2. ABI-Aligned Stack Pointer**
+
+```cpp
+// Platform-specific alignment
+// AMD64: rsp & ~15 (16-byte aligned)
+// SysV x86: (esp & ~15) - 4
+```
+
+**3. Lazy Initialization**
+
+Stack pointer is only initialized if null:
+```cpp
+auto comparison = ir.CreateICmpEQ(rsp_val, GetConstantInt(ptr_size, 0));
+// If null, store InitialStackPointerValue()
+```
+
+**4. Memory Access Through Remill**
+
+Stack accesses go through remill's `__remill_read/write_memory_*` intrinsics, same as other memory. No special lowering.
+
+### Key Differences
+
+| Aspect | Our Implementation | McSema |
+|--------|-------------------|--------|
+| **Goal** | Compile-time constant folding | Runtime execution |
+| **RSP Value** | Constant (`0x7FFFFF000000`) | Runtime pointer to TLS buffer |
+| **Stack Size** | Small (16 bytes) for SROA | Large (~1 MiB) for real programs |
+| **Memory Lowering** | Intrinsics → load/store at known offsets | Intrinsics remain for runtime |
+| **Optimization** | Full constant propagation | Limited (addresses not constant) |
+| **Multi-threading** | N/A (single function) | TLS stack per thread |
+| **ABI Compliance** | Not needed | 16-byte alignment enforced |
+
+### Why We Differ
+
+McSema lifts entire executables for **re-execution**, so it needs:
+- Real stack memory that grows dynamically
+- Thread-safety via TLS
+- ABI compliance for calling native functions
+
+Our lifter targets **analysis/optimization** of small code snippets, so we use:
+- Constant RSP to enable LLVM's constant propagation
+- Small fixed-size alloca for SROA optimization
+- Compile-time lowering to eliminate memory intrinsics
+
+### What We Could Adopt
+
+If we needed runtime execution support:
+1. **TLS stack buffer** - For multi-threaded lifted code
+2. **Lazy initialization** - Check if RSP is null before initializing
+3. **ABI alignment** - For interop with native functions
