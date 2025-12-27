@@ -27,10 +27,16 @@ llvm::Function *WrapperBuilder::CreateInt32ReturnWrapper(
 
   // Initialize RSP with a known constant for stack address tracking
   // Using constant enables memory lowering to recognize stack accesses
+  // We set RSP = INITIAL_RSP - 8 to simulate a caller having pushed a
+  // return address. The stack location at RSP will contain 0 (sentinel).
+  // When the lifted function returns, its RET will pop this 0 value,
+  // which won't match any internal return address, causing the switch
+  // to take the default branch and properly exit the LLVM function.
   auto *rsp_reg = ctx_.GetRegister("RSP");
   auto *rsp_ptr = rsp_reg->AddressOf(state_ptr, builder);
+  uint64_t initial_rsp = INITIAL_RSP - 8;  // Point to "return address" slot
   builder.CreateStore(
-      llvm::ConstantInt::get(builder.getInt64Ty(), INITIAL_RSP), rsp_ptr);
+      llvm::ConstantInt::get(builder.getInt64Ty(), initial_rsp), rsp_ptr);
 
   // Call lifted function
   llvm::Value *args[] = {

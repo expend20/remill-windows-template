@@ -28,9 +28,10 @@ function(add_cpp_lifting_test)
     )
 
     # Compile .cpp -> .obj using clang-cl
+    # /GS- disables security cookies which we can't handle in lifted code
     add_custom_command(
         OUTPUT ${OBJ_FILE}
-        COMMAND ${CLANG_CL_EXECUTABLE} /c /O2 /nologo /Fo${OBJ_FILE} ${ARG_CPP}
+        COMMAND ${CLANG_CL_EXECUTABLE} /c /O2 /GS- /nologo /Fo${OBJ_FILE} ${ARG_CPP}
         DEPENDS ${ARG_CPP} ${INPUT_LL}
         COMMENT "[${ARG_NAME}] Compiling ${ARG_CPP}..."
         WORKING_DIRECTORY ${BUILD_DIR}

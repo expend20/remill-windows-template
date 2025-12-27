@@ -75,6 +75,16 @@ class ControlFlowLifter {
   // Set of block addresses that are call targets (i.e., helper functions)
   // RETs in these blocks should dispatch back to callers
   std::set<uint64_t> call_targets_;
+
+  // Shadow return stack for proper LIFO call dispatch
+  // Maps call site return address to a unique index
+  std::map<uint64_t, uint32_t> call_site_indices_;
+
+  // Allocas for the shadow return stack (created in entry block)
+  llvm::AllocaInst *shadow_stack_ = nullptr;     // [MAX_CALL_DEPTH x i32]
+  llvm::AllocaInst *shadow_stack_sp_ = nullptr;  // i32 stack pointer
+
+  static constexpr unsigned kMaxCallDepth = 64;
 };
 
 }  // namespace lifting

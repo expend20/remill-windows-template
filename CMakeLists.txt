@@ -140,6 +140,14 @@ else()
             EXPECTED_EXIT_CODE 4919
         )
 
+        add_cpp_lifting_test(
+            NAME xtea_roundtrip
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_roundtrip.cpp
+            ENTRY test_me
+            RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+            EXPECTED_EXIT_CODE 4919
+        )
+
         # Obfuscation pass tests (require opt and llvm-ob-passes)
         if(LLVM_OPT_EXECUTABLE)
             message(STATUS "Found opt: ${LLVM_OPT_EXECUTABLE}")

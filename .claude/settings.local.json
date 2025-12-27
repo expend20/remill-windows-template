@@ -38,7 +38,8 @@
       "Bash(E:/temp/remill-windows-template/dependencies/install/bin/opt.exe:*)",
       "Bash(ml64:*)",
       "Bash(../../../build/lifter.exe shellcode.exe)",
-      "Bash(../../../dependencies/install/bin/opt.exe:*)"
+      "Bash(../../../dependencies/install/bin/opt.exe:*)",
+      "Bash(E:/temp/remill-windows-template/build/tests/xtea_roundtrip/xtea_roundtrip_runner.exe)"
     ]
   }
 }

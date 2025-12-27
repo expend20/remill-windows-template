@@ -13,6 +13,54 @@
 
 namespace lifting {
 
+namespace {
+
+// Try to decompose an address as: constant_base + dynamic_offset
+// where constant_base falls within a known section.
+// Returns {base_va, offset_value} or {0, nullptr} if not decomposable.
+// Handles patterns like:
+//   - add i64 %base_const, %offset
+//   - add i64 %offset, %base_const
+//   - or i64 %base_const, %offset (disjoint bits - common for array indexing)
+std::pair<uint64_t, llvm::Value*>
+DecomposeAddress(llvm::Value *addr, const MemoryBackingInfo &mem_info,
+                 const StackBackingInfo *stack_info) {
+  // Handle binary operators: add and or
+  if (auto *bin_op = llvm::dyn_cast<llvm::BinaryOperator>(addr)) {
+    unsigned opcode = bin_op->getOpcode();
+
+    // We handle ADD and OR (disjoint OR is used for array indexing)
+    if (opcode == llvm::Instruction::Add || opcode == llvm::Instruction::Or) {
+      llvm::Value *op0 = bin_op->getOperand(0);
+      llvm::Value *op1 = bin_op->getOperand(1);
+
+      // Check each operand to see if it's a constant within a known section
+      for (int i = 0; i < 2; i++) {
+        llvm::Value *potential_base = (i == 0) ? op0 : op1;
+        llvm::Value *potential_offset = (i == 0) ? op1 : op0;
+
+        if (auto *base_const = llvm::dyn_cast<llvm::ConstantInt>(potential_base)) {
+          uint64_t base_va = base_const->getZExtValue();
+
+          // Check if base is within a known global section
+          if (mem_info.FindGlobalForAddress(base_va).first) {
+            return {base_va, potential_offset};
+          }
+
+          // Check if base is within stack range
+          if (stack_info && stack_info->FindStackOffset(base_va).first) {
+            return {base_va, potential_offset};
+          }
+        }
+      }
+    }
+  }
+
+  return {0, nullptr};
+}
+
+}  // anonymous namespace
+
 std::pair<llvm::GlobalVariable *, uint64_t>
 MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
   for (const auto &mapping : sections) {
@@ -220,11 +268,74 @@ void LowerMemoryIntrinsics(llvm::Module *module,
                       << " -> load from stack alloca + " << std::dec << stack_offset << "\n";
           }
         }
+      } else {
+        // Try dynamic address decomposition: base_const + dynamic_offset
+        auto [base_va, dyn_offset] = DecomposeAddress(addr_arg, memory_info, stack_info);
+        if (base_va && dyn_offset) {
+          // Try global sections
+          auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
+          if (global) {
+            auto it = global_to_alloca.find(global);
+            if (it != global_to_alloca.end()) {
+              llvm::IRBuilder<> ir(call);
+              auto *alloca = it->second;
+
+              // Compute total offset: section_offset + dynamic_offset
+              llvm::Value *total_offset = dyn_offset;
+              if (section_offset != 0) {
+                total_offset = ir.CreateAdd(
+                    llvm::ConstantInt::get(dyn_offset->getType(), section_offset),
+                    dyn_offset, "total_offset");
+              }
+
+              // GEP with dynamic index
+              auto *ptr = ir.CreateGEP(
+                  alloca->getAllocatedType(), alloca,
+                  {ir.getInt64(0), total_offset}, "dyn_mem_ptr");
+              auto *val = ir.CreateLoad(call->getType(), ptr, "dyn_mem_val");
+
+              replacement = val;
+              std::cout << "Lowered dynamic read (base 0x" << std::hex << base_va
+                        << " + offset) -> load from global alloca\n" << std::dec;
+            }
+          }
+          // Try stack if global not found
+          else if (stack_info) {
+            auto [stack_alloca, stack_offset] = stack_info->FindStackOffset(base_va);
+            if (stack_alloca) {
+              llvm::IRBuilder<> ir(call);
+
+              // Compute total offset: stack_offset + dynamic_offset
+              llvm::Value *total_offset = dyn_offset;
+              if (stack_offset != 0) {
+                total_offset = ir.CreateAdd(
+                    llvm::ConstantInt::get(dyn_offset->getType(), stack_offset),
+                    dyn_offset, "total_offset");
+              }
+
+              auto *ptr = ir.CreateGEP(
+                  stack_alloca->getAllocatedType(), stack_alloca,
+                  {ir.getInt64(0), total_offset}, "dyn_stack_ptr");
+              auto *val = ir.CreateLoad(call->getType(), ptr, "dyn_stack_val");
+
+              replacement = val;
+              std::cout << "Lowered dynamic read (base 0x" << std::hex << base_va
+                        << " + offset) -> load from stack alloca\n" << std::dec;
+            }
+          }
+        }
       }
 
-      // Fall back to undef for unknown addresses
+      // NOTE: We intentionally do NOT have a fallback for arbitrary dynamic addresses.
+      // The previous fallback assumed all dynamic addresses were stack-relative, which
+      // caused incorrect behavior when the address pointed to other sections (e.g., .rdata).
+      // If we can't decompose the address as base_const + offset where base_const is in
+      // a known section, we leave the access as undef.
+
+      // Fall back to undef for truly unknown addresses (shouldn't happen for well-formed lifted code)
       if (!replacement) {
         replacement = llvm::UndefValue::get(call->getType());
+        std::cerr << "WARNING: Could not lower memory read, using undef\n";
       }
 
       call->replaceAllUsesWith(replacement);
@@ -276,7 +387,66 @@ void LowerMemoryIntrinsics(llvm::Module *module,
                       << " -> store to stack alloca + " << std::dec << stack_offset << "\n";
           }
         }
+      } else {
+        // Try dynamic address decomposition: base_const + dynamic_offset
+        auto [base_va, dyn_offset] = DecomposeAddress(addr_arg, memory_info, stack_info);
+        if (base_va && dyn_offset) {
+          // Try global sections
+          auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
+          if (global) {
+            auto it = global_to_alloca.find(global);
+            if (it != global_to_alloca.end()) {
+              llvm::IRBuilder<> ir(call);
+              auto *alloca = it->second;
+
+              // Compute total offset: section_offset + dynamic_offset
+              llvm::Value *total_offset = dyn_offset;
+              if (section_offset != 0) {
+                total_offset = ir.CreateAdd(
+                    llvm::ConstantInt::get(dyn_offset->getType(), section_offset),
+                    dyn_offset, "total_offset");
+              }
+
+              // GEP with dynamic index
+              auto *ptr = ir.CreateGEP(
+                  alloca->getAllocatedType(), alloca,
+                  {ir.getInt64(0), total_offset}, "dyn_mem_ptr");
+              ir.CreateStore(value_arg, ptr);
+
+              lowered = true;
+              std::cout << "Lowered dynamic write (base 0x" << std::hex << base_va
+                        << " + offset) -> store to global alloca\n" << std::dec;
+            }
+          }
+          // Try stack if global not found
+          else if (stack_info) {
+            auto [stack_alloca, stack_offset] = stack_info->FindStackOffset(base_va);
+            if (stack_alloca) {
+              llvm::IRBuilder<> ir(call);
+
+              // Compute total offset: stack_offset + dynamic_offset
+              llvm::Value *total_offset = dyn_offset;
+              if (stack_offset != 0) {
+                total_offset = ir.CreateAdd(
+                    llvm::ConstantInt::get(dyn_offset->getType(), stack_offset),
+                    dyn_offset, "total_offset");
+              }
+
+              auto *ptr = ir.CreateGEP(
+                  stack_alloca->getAllocatedType(), stack_alloca,
+                  {ir.getInt64(0), total_offset}, "dyn_stack_ptr");
+              ir.CreateStore(value_arg, ptr);
+
+              lowered = true;
+              std::cout << "Lowered dynamic write (base 0x" << std::hex << base_va
+                        << " + offset) -> store to stack alloca\n" << std::dec;
+            }
+          }
+        }
       }
+
+      // NOTE: We intentionally do NOT have a fallback for arbitrary dynamic addresses.
+      // See the comment in the read handling section above.
 
       // Write intrinsics return the memory pointer (first argument)
       call->replaceAllUsesWith(call->getArgOperand(0));
@@ -284,6 +454,7 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       if (!lowered) {
         // Unknown address - write is dropped (becomes no-op)
+        std::cerr << "WARNING: Could not lower memory write, dropped\n";
       }
     }
   }

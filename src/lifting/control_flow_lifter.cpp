@@ -20,6 +20,9 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   blocks_.clear();
   return_blocks_.clear();
   call_targets_.clear();
+  call_site_indices_.clear();
+  shadow_stack_ = nullptr;
+  shadow_stack_sp_ = nullptr;
 
   code_start_ = code_base;
   code_end_ = code_base + size;
@@ -38,6 +41,7 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
 
   // Pre-create return continuation blocks for all internal calls
   // This needs to happen before LiftBlocks so RET can use them
+  uint32_t call_site_index = 0;
   for (const auto &[addr, decoded] : instructions_) {
     if (decoded.instr.category == remill::Instruction::kCategoryDirectFunctionCall) {
       uint64_t target = decoded.instr.branch_taken_pc;
@@ -49,10 +53,29 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
         auto *ret_block = llvm::BasicBlock::Create(context, name, func);
         return_blocks_[return_addr] = ret_block;
 
+        // Assign a unique index to this call site for shadow stack dispatch
+        call_site_indices_[return_addr] = call_site_index++;
+
         // Mark the target as a call target (its RET should dispatch)
         call_targets_.insert(target);
       }
     }
+  }
+
+  // Create shadow return stack allocas if we have internal calls
+  if (!return_blocks_.empty()) {
+    auto &context = ctx_.GetContext();
+    llvm::IRBuilder<> builder(&func->getEntryBlock(),
+                               func->getEntryBlock().begin());
+
+    // Allocate shadow stack array [kMaxCallDepth x i32]
+    auto *array_type = llvm::ArrayType::get(builder.getInt32Ty(), kMaxCallDepth);
+    shadow_stack_ = builder.CreateAlloca(array_type, nullptr, "shadow_ret_stack");
+
+    // Allocate stack pointer, initialize to 0
+    shadow_stack_sp_ = builder.CreateAlloca(builder.getInt32Ty(), nullptr,
+                                             "shadow_ret_sp");
+    builder.CreateStore(builder.getInt32(0), shadow_stack_sp_);
   }
 
   // Lift instructions into their respective blocks
@@ -296,10 +319,24 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
       // Direct function call - branch to target and set up return
       uint64_t target = last_instr.instr.branch_taken_pc;
 
-      if (blocks_.count(target) && return_blocks_.count(next_addr)) {
-        // Internal call - branch to target block
-        // Use the pre-created continuation block
+      if (blocks_.count(target) && return_blocks_.count(next_addr) &&
+          shadow_stack_ && shadow_stack_sp_) {
+        // Internal call - push index to shadow stack before branching
         auto *ret_block = return_blocks_[next_addr];
+        uint32_t call_idx = call_site_indices_[next_addr];
+
+        // Push call site index to shadow stack:
+        // sp = load shadow_stack_sp
+        // shadow_stack[sp] = call_idx
+        // shadow_stack_sp = sp + 1
+        auto *sp = builder.CreateLoad(builder.getInt32Ty(), shadow_stack_sp_,
+                                       "shadow_sp");
+        auto *slot = builder.CreateInBoundsGEP(
+            shadow_stack_->getAllocatedType(), shadow_stack_,
+            {builder.getInt32(0), sp}, "shadow_slot");
+        builder.CreateStore(builder.getInt32(call_idx), slot);
+        auto *new_sp = builder.CreateAdd(sp, builder.getInt32(1), "shadow_sp_inc");
+        builder.CreateStore(new_sp, shadow_stack_sp_);
 
         // Branch to call target
         builder.CreateBr(blocks_[target]);
@@ -323,53 +360,73 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
     }
 
     case remill::Instruction::kCategoryFunctionReturn: {
-      // Return from function
-      // Only dispatch if this block is part of a called helper function
-      // A block is a helper if:
-      // 1. It's a call target entry point, OR
-      // 2. It's before the main entry point (helpers typically come first)
-      bool is_helper = call_targets_.count(block_addr) || block_addr < entry_point_;
+      // Return from function using shadow stack dispatch
+      // The shadow stack contains indices that map to continuation blocks.
+      // This ensures proper LIFO call semantics even after LLVM optimization.
 
-      if (return_blocks_.empty() || !is_helper) {
-        // No internal callers OR this is main's RET - just return from LLVM function
+      if (return_blocks_.empty() || !shadow_stack_ || !shadow_stack_sp_) {
+        // No internal callers - just return from LLVM function
         builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
       } else {
-        // Dispatch based on return address stored in NEXT_PC by RET semantic
-        // Find the NEXT_PC alloca
-        llvm::AllocaInst *next_pc = nullptr;
-        for (auto &inst : block->getParent()->getEntryBlock()) {
-          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
-            if (alloca->getName() == "NEXT_PC") {
-              next_pc = alloca;
-              break;
-            }
-          }
+        // Pop from shadow stack and dispatch:
+        // sp = load shadow_stack_sp
+        // new_sp = sp - 1
+        // idx = load shadow_stack[new_sp]
+        // shadow_stack_sp = new_sp
+        // switch(idx) { ... }
+
+        auto *sp = builder.CreateLoad(builder.getInt32Ty(), shadow_stack_sp_,
+                                       "shadow_sp_ret");
+
+        // Check if stack is empty (sp == 0) -> this is main's RET
+        auto *is_empty = builder.CreateICmpEQ(sp, builder.getInt32(0),
+                                               "shadow_stack_empty");
+
+        // Create blocks for the conditional dispatch
+        auto &context = ctx_.GetContext();
+        auto *main_ret_block = llvm::BasicBlock::Create(
+            context, "main_ret", block->getParent());
+        auto *helper_ret_block = llvm::BasicBlock::Create(
+            context, "helper_ret", block->getParent());
+
+        builder.CreateCondBr(is_empty, main_ret_block, helper_ret_block);
+
+        // Main return - return from LLVM function
+        {
+          llvm::IRBuilder<> main_builder(main_ret_block);
+          main_builder.CreateRet(remill::LoadMemoryPointer(main_ret_block, *intrinsics));
         }
 
-        if (next_pc) {
-          // Load the return address from NEXT_PC (set by RET semantic)
-          auto *ret_addr = builder.CreateLoad(builder.getInt64Ty(), next_pc);
+        // Helper return - pop index and dispatch
+        {
+          llvm::IRBuilder<> helper_builder(helper_ret_block);
 
-          // Create default block that returns from LLVM function
-          // This handles main function's RET (with invalid return address)
-          auto &context = ctx_.GetContext();
-          auto *default_block = llvm::BasicBlock::Create(
-              context, "ret_default", block->getParent());
-          llvm::IRBuilder<> default_builder(default_block);
-          default_builder.CreateRet(remill::LoadMemoryPointer(default_block, *intrinsics));
+          // Decrement stack pointer
+          auto *new_sp = helper_builder.CreateSub(sp, helper_builder.getInt32(1),
+                                                   "shadow_sp_dec");
+          helper_builder.CreateStore(new_sp, shadow_stack_sp_);
 
-          // Create switch to dispatch to known return addresses
-          auto *switch_inst = builder.CreateSwitch(
-              ret_addr, default_block, return_blocks_.size());
+          // Load the call site index
+          auto *slot = helper_builder.CreateInBoundsGEP(
+              shadow_stack_->getAllocatedType(), shadow_stack_,
+              {helper_builder.getInt32(0), new_sp}, "shadow_slot_ret");
+          auto *call_idx = helper_builder.CreateLoad(helper_builder.getInt32Ty(),
+                                                      slot, "call_site_idx");
+
+          // Create default block (shouldn't happen, but needed for switch)
+          auto *unreachable_block = llvm::BasicBlock::Create(
+              context, "unreachable_ret", block->getParent());
+          llvm::IRBuilder<> unreachable_builder(unreachable_block);
+          unreachable_builder.CreateUnreachable();
+
+          // Create switch to dispatch based on call site index
+          auto *switch_inst = helper_builder.CreateSwitch(
+              call_idx, unreachable_block, return_blocks_.size());
 
           for (const auto &[addr, ret_block] : return_blocks_) {
-            switch_inst->addCase(
-                llvm::ConstantInt::get(builder.getInt64Ty(), addr),
-                ret_block);
+            uint32_t idx = call_site_indices_[addr];
+            switch_inst->addCase(helper_builder.getInt32(idx), ret_block);
           }
-        } else {
-          // Fallback - just return
-          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
         }
       }
       break;

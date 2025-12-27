@@ -12,9 +12,11 @@ namespace lifting {
 // Stack memory constants for lifted code
 // Initial RSP value (high address, stack grows down)
 constexpr uint64_t INITIAL_RSP = 0x7FFFFF000000ULL;
-// Maximum stack size - keep small to enable LLVM's SROA optimization
-// Need at least 24 bytes: 8 for call return addr, 8 for padding, 8 for outer RET
-constexpr uint64_t STACK_SIZE = 32ULL;
+// Maximum stack size for lifted code
+// Must be large enough for nested function calls and local variables
+// and accommodate RSP growth during RET dispatch loops
+// XTEA test needs substantial headroom for complex control flow
+constexpr uint64_t STACK_SIZE = 4096ULL;
 
 // Builds wrapper functions that call lifted code with native calling convention
 class WrapperBuilder {
