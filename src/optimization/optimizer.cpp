@@ -55,6 +55,10 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
   // Promote allocas to SSA registers
   fpm.addPass(llvm::PromotePass());
 
+  // SCCP: Sparse Conditional Constant Propagation
+  // Critical for resolving indirect jump targets
+  fpm.addPass(llvm::SCCPPass());
+
   // Simplify instructions
   fpm.addPass(llvm::InstCombinePass());
 
@@ -87,6 +91,11 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
   // Dead code elimination
   fpm.addPass(llvm::DCEPass());
   fpm.addPass(llvm::ADCEPass());
+
+  // Final SCCP + SimplifyCFG to resolve indirect jumps
+  // After all inlining and optimization, switch selectors should be constants
+  fpm.addPass(llvm::SCCPPass());
+  fpm.addPass(llvm::SimplifyCFGPass());
 
   fpm.run(*target_func, fam);
 }

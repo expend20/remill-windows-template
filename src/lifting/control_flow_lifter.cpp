@@ -596,6 +596,80 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
       break;
     }
 
+    case remill::Instruction::kCategoryIndirectJump: {
+      // Indirect jump (e.g., jmp rax) - emit a switch over all possible targets
+      // After SCCP runs, the switch selector becomes a constant and SimplifyCFG
+      // will eliminate dead cases, leaving a direct branch.
+
+      // Get NEXT_PC which contains the jump target (set by the JMP instruction)
+      llvm::AllocaInst *next_pc_alloca = nullptr;
+      for (auto &inst : block->getParent()->getEntryBlock()) {
+        if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+          if (alloca->getName() == "NEXT_PC") {
+            next_pc_alloca = alloca;
+            break;
+          }
+        }
+      }
+
+      if (next_pc_alloca) {
+        auto *target_pc = builder.CreateLoad(builder.getInt64Ty(), next_pc_alloca);
+
+        // Collect all blocks in the same function, excluding the entry block
+        // (to avoid creating back edges that confuse LLVM's loop analysis)
+        auto *entry_block = &block->getParent()->getEntryBlock();
+        std::vector<std::pair<uint64_t, llvm::BasicBlock *>> targets;
+        for (const auto &[addr, bb] : blocks_) {
+          if (sameFunction(addr) && bb != entry_block) {
+            targets.push_back({addr, bb});
+          }
+        }
+
+        // Find the MEMORY alloca for the return value
+        llvm::AllocaInst *memory_alloca = nullptr;
+        for (auto &inst : block->getParent()->getEntryBlock()) {
+          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+            if (alloca->getName() == "MEMORY") {
+              memory_alloca = alloca;
+              break;
+            }
+          }
+        }
+
+        if (!targets.empty() && memory_alloca) {
+          // Create a dispatch block to hold the switch
+          // This avoids issues with back edges to the entry block
+          auto *dispatch_block = llvm::BasicBlock::Create(
+              ctx_.GetContext(), "indirect_jmp_dispatch", block->getParent());
+          builder.CreateBr(dispatch_block);
+
+          llvm::IRBuilder<> dispatch_builder(dispatch_block);
+
+          // Create switch with default case returning (for truly unknown targets)
+          auto *default_block = llvm::BasicBlock::Create(
+              ctx_.GetContext(), "indirect_jmp_default", block->getParent());
+          llvm::IRBuilder<> default_builder(default_block);
+          auto *mem_ptr = default_builder.CreateLoad(default_builder.getPtrTy(), memory_alloca);
+          default_builder.CreateRet(mem_ptr);
+
+          auto *sw = dispatch_builder.CreateSwitch(target_pc, default_block, targets.size());
+          for (const auto &[addr, bb] : targets) {
+            sw->addCase(dispatch_builder.getInt64(addr), bb);
+          }
+
+          std::cout << "Created indirect jump switch with " << targets.size()
+                    << " possible targets\n";
+        } else {
+          // No known targets or missing MEMORY alloca, just return
+          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+        }
+      } else {
+        // Fallback: just return
+        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+      }
+      break;
+    }
+
     default:
       // Normal instruction - fall through to next block or return
       if (sameFunction(next_addr)) {

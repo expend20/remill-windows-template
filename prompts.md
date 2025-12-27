@@ -104,4 +104,6 @@ Create a new test similar to global_var.cpp. Take the source from src\deps\llvm-
 
 ---
 
+Have a look at POINTER_ANALYSIS.md and xtea_noinline.cpp test. Research what prevents constats from propagating and study the possibility of applying inline attributes to the lifted functions, will it make the test work?
 
+Have a look at POINTER_ANALYSIS.md and xtea_noinline.cpp test. Research what prevents constats from propagating and study the possibility of applying LLVM's Alias Analysis, can it make the test work when lifted functions are not inlined?
