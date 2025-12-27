@@ -285,3 +285,20 @@ Options to address noinline function calls:
 2. SSA-based pointer tracking for phi-aware analysis
 3. Integration with external xref information (IDA Pro, etc.)
 4. Inter-procedural dataflow for function call boundaries
+
+# Expret hints
+
+## Hint 1
+
+Load/Store prop is already hard enough going cross block, going cross function would require a bit of wizardry I wouldn’t want to do
+Is there anything preventing you from inlining the callee?
+
+## Hint 2
+
+Do you mean that you want to propagate past the function call where the stack pointer is passed as an argument?
+
+If that's the case you need to come up with proper annotations for the function calls you are lifting, enabling LLVM's Alias Analysis to do its job. I'm specifically talking about the LLVM memory attributes that you can assign to the function and function arguments to specify if the function is reading/writing/reading-and-writing/not-accessing memory and in addition if it does that via arguments and/or other pointers.
+Look for readnone, readonly, writeonly, argmemonly and especially the new fine grained memory(..) attributes in the LLVM language documentation: https://llvm.org/docs/LangRef.html
+This can help you in some cases, but the Alias Analysis will still stop because it doesn't know about the size of the pointed objects or if the pointer you are passing to a function can be used to access/manipulate other objects on the stack. To do that you enter decompilation territory where you would need to have structure definitions (like IDA) to assist the AA in doing its job and determining to which extent some pointer on the stack aliases or not with another pointer passed to a function call.
+
+Depending on the code you are lifting and how well the function behaves, you might be able to make stronger assumptions without violating the soundness of the analysis.

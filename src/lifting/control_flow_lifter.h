@@ -39,6 +39,12 @@ class ControlFlowLifter {
   bool DiscoverBasicBlocks(uint64_t start_address, const uint8_t *bytes,
                            size_t size);
 
+  // Determine which blocks belong to which native function
+  void AssignBlocksToFunctions();
+
+  // Create helper functions for call targets with alwaysinline attribute
+  void CreateHelperFunctions(llvm::Function *main_func);
+
   // Create LLVM basic blocks for each discovered block
   void CreateBasicBlocks(llvm::Function *func);
 
@@ -68,23 +74,22 @@ class ControlFlowLifter {
   // Entry point address (may differ from code_start_)
   uint64_t entry_point_ = 0;
 
-  // Call return addresses mapped to their continuation blocks
-  // Used by RET to dispatch back to the correct call site
-  std::map<uint64_t, llvm::BasicBlock *> return_blocks_;
-
   // Set of block addresses that are call targets (i.e., helper functions)
-  // RETs in these blocks should dispatch back to callers
   std::set<uint64_t> call_targets_;
 
-  // Shadow return stack for proper LIFO call dispatch
-  // Maps call site return address to a unique index
-  std::map<uint64_t, uint32_t> call_site_indices_;
+  // Helper functions for each call target (marked alwaysinline)
+  // Maps call target address -> LLVM function
+  std::map<uint64_t, llvm::Function *> helper_functions_;
 
-  // Allocas for the shadow return stack (created in entry block)
-  llvm::AllocaInst *shadow_stack_ = nullptr;     // [MAX_CALL_DEPTH x i32]
-  llvm::AllocaInst *shadow_stack_sp_ = nullptr;  // i32 stack pointer
+  // Which native function owns each block address
+  // 0 = main function, non-zero = helper function entry address
+  std::map<uint64_t, uint64_t> block_owner_;
 
-  static constexpr unsigned kMaxCallDepth = 64;
+  // The main function being lifted
+  llvm::Function *main_func_ = nullptr;
+
+  // Return address for each call site (used to continue after call)
+  std::map<uint64_t, uint64_t> call_return_addrs_;
 };
 
 }  // namespace lifting

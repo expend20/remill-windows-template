@@ -1,6 +1,8 @@
 #include "control_flow_lifter.h"
 
 #include <iostream>
+#include <queue>
+#include <sstream>
 #include <variant>
 
 #include <llvm/IR/IRBuilder.h>
@@ -18,11 +20,11 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   instructions_.clear();
   block_starts_.clear();
   blocks_.clear();
-  return_blocks_.clear();
   call_targets_.clear();
-  call_site_indices_.clear();
-  shadow_stack_ = nullptr;
-  shadow_stack_sp_ = nullptr;
+  helper_functions_.clear();
+  block_owner_.clear();
+  call_return_addrs_.clear();
+  main_func_ = func;
 
   code_start_ = code_base;
   code_end_ = code_base + size;
@@ -36,47 +38,27 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   // Ensure entry point is a block start
   block_starts_.insert(entry_point);
 
-  // Create LLVM basic blocks
-  CreateBasicBlocks(func);
-
-  // Pre-create return continuation blocks for all internal calls
-  // This needs to happen before LiftBlocks so RET can use them
-  uint32_t call_site_index = 0;
+  // Identify call targets from the decoded instructions
   for (const auto &[addr, decoded] : instructions_) {
     if (decoded.instr.category == remill::Instruction::kCategoryDirectFunctionCall) {
       uint64_t target = decoded.instr.branch_taken_pc;
       uint64_t return_addr = addr + decoded.size;
-      if (blocks_.count(target) && blocks_.count(return_addr)) {
-        // Internal call - create return continuation block
-        auto &context = ctx_.GetContext();
-        std::string name = "ret_" + std::to_string(return_addr);
-        auto *ret_block = llvm::BasicBlock::Create(context, name, func);
-        return_blocks_[return_addr] = ret_block;
-
-        // Assign a unique index to this call site for shadow stack dispatch
-        call_site_indices_[return_addr] = call_site_index++;
-
-        // Mark the target as a call target (its RET should dispatch)
+      if (block_starts_.count(target) && block_starts_.count(return_addr)) {
+        // Internal call - mark target as a helper function entry
         call_targets_.insert(target);
+        call_return_addrs_[addr] = return_addr;
       }
     }
   }
 
-  // Create shadow return stack allocas if we have internal calls
-  if (!return_blocks_.empty()) {
-    auto &context = ctx_.GetContext();
-    llvm::IRBuilder<> builder(&func->getEntryBlock(),
-                               func->getEntryBlock().begin());
+  // Determine which blocks belong to which native function
+  AssignBlocksToFunctions();
 
-    // Allocate shadow stack array [kMaxCallDepth x i32]
-    auto *array_type = llvm::ArrayType::get(builder.getInt32Ty(), kMaxCallDepth);
-    shadow_stack_ = builder.CreateAlloca(array_type, nullptr, "shadow_ret_stack");
+  // Create helper functions for call targets
+  CreateHelperFunctions(func);
 
-    // Allocate stack pointer, initialize to 0
-    shadow_stack_sp_ = builder.CreateAlloca(builder.getInt32Ty(), nullptr,
-                                             "shadow_ret_sp");
-    builder.CreateStore(builder.getInt32(0), shadow_stack_sp_);
-  }
+  // Create LLVM basic blocks for main function
+  CreateBasicBlocks(func);
 
   // Lift instructions into their respective blocks
   if (!LiftBlocks(bytes, size, code_base)) {
@@ -84,6 +66,165 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   }
 
   return true;
+}
+
+void ControlFlowLifter::AssignBlocksToFunctions() {
+  // Use BFS to determine which blocks belong to which function
+  // Main function: blocks reachable from entry_point_ without entering call_targets_
+  // Helper function: blocks reachable from a call_target_ entry
+
+  // First, assign all blocks to main function (owner = 0)
+  for (uint64_t addr : block_starts_) {
+    block_owner_[addr] = 0;
+  }
+
+  // For each call target, find blocks reachable from it
+  for (uint64_t helper_entry : call_targets_) {
+    std::queue<uint64_t> worklist;
+    std::set<uint64_t> visited;
+
+    worklist.push(helper_entry);
+    visited.insert(helper_entry);
+
+    while (!worklist.empty()) {
+      uint64_t block_addr = worklist.front();
+      worklist.pop();
+
+      // This block belongs to the helper function
+      block_owner_[block_addr] = helper_entry;
+
+      // Find successors of this block
+      // Look at the last instruction to determine control flow
+      auto it = block_starts_.find(block_addr);
+      auto next_it = std::next(it);
+      uint64_t block_end = (next_it != block_starts_.end()) ? *next_it : code_end_;
+
+      // Find the last instruction in this block
+      uint64_t last_addr = block_addr;
+      for (auto &[addr, decoded] : instructions_) {
+        if (addr >= block_addr && addr < block_end) {
+          if (decoded.instr.IsControlFlow()) {
+            last_addr = addr;
+            break;
+          }
+          last_addr = addr;
+        }
+      }
+
+      auto instr_it = instructions_.find(last_addr);
+      if (instr_it == instructions_.end()) continue;
+
+      const auto &decoded = instr_it->second;
+      uint64_t next_addr = last_addr + decoded.size;
+
+      switch (decoded.instr.category) {
+        case remill::Instruction::kCategoryConditionalBranch: {
+          // Add both targets
+          if (auto *cond = std::get_if<remill::Instruction::ConditionalInstruction>(
+                  &decoded.instr.flows)) {
+            if (auto *direct = std::get_if<remill::Instruction::DirectJump>(
+                    &cond->taken_branch)) {
+              uint64_t target = direct->taken_flow.known_target;
+              if (block_starts_.count(target) && !visited.count(target) &&
+                  !call_targets_.count(target)) {
+                worklist.push(target);
+                visited.insert(target);
+              }
+            }
+          }
+          if (block_starts_.count(next_addr) && !visited.count(next_addr) &&
+              !call_targets_.count(next_addr)) {
+            worklist.push(next_addr);
+            visited.insert(next_addr);
+          }
+          break;
+        }
+
+        case remill::Instruction::kCategoryDirectJump: {
+          if (auto *jump = std::get_if<remill::Instruction::DirectJump>(
+                  &decoded.instr.flows)) {
+            uint64_t target = jump->taken_flow.known_target;
+            if (block_starts_.count(target) && !visited.count(target) &&
+                !call_targets_.count(target)) {
+              worklist.push(target);
+              visited.insert(target);
+            }
+          }
+          break;
+        }
+
+        case remill::Instruction::kCategoryDirectFunctionCall: {
+          // Don't follow calls - they go to other functions
+          // But the return address continues in this function
+          if (block_starts_.count(next_addr) && !visited.count(next_addr) &&
+              !call_targets_.count(next_addr)) {
+            worklist.push(next_addr);
+            visited.insert(next_addr);
+          }
+          break;
+        }
+
+        case remill::Instruction::kCategoryFunctionReturn:
+          // RET ends the function, don't follow
+          break;
+
+        default:
+          // Fall through to next block
+          if (block_starts_.count(next_addr) && !visited.count(next_addr) &&
+              !call_targets_.count(next_addr)) {
+            worklist.push(next_addr);
+            visited.insert(next_addr);
+          }
+          break;
+      }
+    }
+  }
+
+  // Debug output
+  std::cout << "Block ownership:\n";
+  for (const auto &[addr, owner] : block_owner_) {
+    if (owner == 0) {
+      std::cout << "  0x" << std::hex << addr << " -> main\n";
+    } else {
+      std::cout << "  0x" << std::hex << addr << " -> helper_0x" << owner << "\n";
+    }
+  }
+  std::cout << std::dec;
+}
+
+void ControlFlowLifter::CreateHelperFunctions(llvm::Function *main_func) {
+  auto *module = main_func->getParent();
+
+  // Helper functions have the same signature as the main lifted function:
+  // ptr @helper(ptr %state, i64 %pc, ptr %memory)
+  auto *func_type = main_func->getFunctionType();
+
+  for (uint64_t helper_entry : call_targets_) {
+    std::stringstream ss;
+    ss << "helper_" << std::hex << helper_entry;
+    std::string name = ss.str();
+    auto *helper_func = llvm::Function::Create(
+        func_type,
+        llvm::GlobalValue::InternalLinkage,
+        name,
+        module);
+
+    // Copy argument names from main function
+    auto main_args = main_func->arg_begin();
+    auto helper_args = helper_func->arg_begin();
+    for (; main_args != main_func->arg_end(); ++main_args, ++helper_args) {
+      helper_args->setName(main_args->getName());
+    }
+
+    // Set attributes for inlining
+    helper_func->addFnAttr(llvm::Attribute::AlwaysInline);
+    helper_func->addFnAttr(llvm::Attribute::NoUnwind);
+    helper_func->removeFnAttr(llvm::Attribute::NoInline);
+
+    helper_functions_[helper_entry] = helper_func;
+
+    std::cout << "Created helper function: " << name << " (alwaysinline)\n";
+  }
 }
 
 bool ControlFlowLifter::DiscoverBasicBlocks(uint64_t start_address,
@@ -187,19 +328,83 @@ bool ControlFlowLifter::DiscoverBasicBlocks(uint64_t start_address,
 void ControlFlowLifter::CreateBasicBlocks(llvm::Function *func) {
   auto &context = ctx_.GetContext();
 
-  // The function already has an entry block with allocas from DefineLiftedFunction
-  // Use it for the entry point block
+  // Create blocks for main function and helper functions
   for (uint64_t addr : block_starts_) {
-    if (addr == entry_point_) {
-      // Use the existing entry block for the entry point
-      auto *entry = &func->getEntryBlock();
-      entry->setName("bb_" + std::to_string(addr));
+    uint64_t owner = block_owner_[addr];
+    llvm::Function *target_func = (owner == 0) ? func : helper_functions_[owner];
+
+    if (!target_func) {
+      std::cerr << "Warning: no function for block 0x" << std::hex << addr
+                << " (owner 0x" << owner << ")\n" << std::dec;
+      continue;
+    }
+
+    std::string name = "bb_" + std::to_string(addr);
+
+    // Check if this is the entry point of the function
+    bool is_entry = (owner == 0 && addr == entry_point_) ||
+                    (owner != 0 && addr == owner);
+
+    if (is_entry && !target_func->empty()) {
+      // Use existing entry block
+      auto *entry = &target_func->getEntryBlock();
+      entry->setName(name);
       blocks_[addr] = entry;
+    } else if (is_entry) {
+      // Create entry block
+      auto *block = llvm::BasicBlock::Create(context, name, target_func);
+      blocks_[addr] = block;
     } else {
-      std::string name = "bb_" + std::to_string(addr);
-      auto *block = llvm::BasicBlock::Create(context, name, func);
+      auto *block = llvm::BasicBlock::Create(context, name, target_func);
       blocks_[addr] = block;
     }
+  }
+
+  // Initialize helper functions with required allocas
+  for (auto &[helper_entry, helper_func] : helper_functions_) {
+    if (helper_func->empty()) {
+      // Create entry block if it doesn't exist
+      auto *entry = llvm::BasicBlock::Create(context, "entry", helper_func);
+      blocks_[helper_entry] = entry;
+    }
+
+    // Add required allocas to helper function entry
+    llvm::IRBuilder<> builder(&helper_func->getEntryBlock(),
+                               helper_func->getEntryBlock().begin());
+
+    // BRANCH_TAKEN
+    builder.CreateAlloca(builder.getInt8Ty(), nullptr, "BRANCH_TAKEN");
+
+    // RETURN_PC
+    builder.CreateAlloca(builder.getInt64Ty(), nullptr, "RETURN_PC");
+
+    // MONITOR
+    auto *monitor = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "MONITOR");
+    builder.CreateStore(builder.getInt64(0), monitor);
+
+    // STATE - store the state pointer argument
+    auto *state_alloca = builder.CreateAlloca(builder.getPtrTy(), nullptr, "STATE");
+    builder.CreateStore(helper_func->getArg(0), state_alloca);
+
+    // MEMORY - store the memory pointer argument
+    auto *memory_alloca = builder.CreateAlloca(builder.getPtrTy(), nullptr, "MEMORY");
+    builder.CreateStore(helper_func->getArg(2), memory_alloca);
+
+    // NEXT_PC - store the PC argument
+    auto *next_pc = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "NEXT_PC");
+    builder.CreateStore(helper_func->getArg(1), next_pc);
+
+    // PC register is updated by instruction lifter
+
+    // Segment bases (required by some instructions)
+    auto *csbase = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "CSBASE");
+    builder.CreateStore(builder.getInt64(0), csbase);
+    auto *ssbase = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "SSBASE");
+    builder.CreateStore(builder.getInt64(0), ssbase);
+    auto *esbase = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "ESBASE");
+    builder.CreateStore(builder.getInt64(0), esbase);
+    auto *dsbase = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "DSBASE");
+    builder.CreateStore(builder.getInt64(0), dsbase);
   }
 }
 
@@ -208,6 +413,13 @@ bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
   // Iterate through each basic block
   for (auto it = block_starts_.begin(); it != block_starts_.end(); ++it) {
     uint64_t block_addr = *it;
+
+    if (!blocks_.count(block_addr)) {
+      std::cerr << "Warning: no LLVM block for address 0x" << std::hex
+                << block_addr << std::dec << "\n";
+      continue;
+    }
+
     llvm::BasicBlock *block = blocks_[block_addr];
 
     // Find the end of this block (start of next block or end of code)
@@ -260,13 +472,17 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
                                      uint64_t next_addr, uint64_t block_addr) {
   llvm::IRBuilder<> builder(block);
   auto *intrinsics = ctx_.GetIntrinsics();
+  uint64_t current_owner = block_owner_[block_addr];
+
+  // Helper to check if a target block is in the same function
+  auto sameFunction = [this, current_owner](uint64_t target_addr) -> bool {
+    if (!blocks_.count(target_addr)) return false;
+    return block_owner_[target_addr] == current_owner;
+  };
 
   switch (last_instr.instr.category) {
     case remill::Instruction::kCategoryConditionalBranch: {
       // Get the condition from BRANCH_TAKEN
-      // After lifting, the lifted code sets a BRANCH_TAKEN variable
-      // We need to read the condition and create a conditional branch
-
       if (auto *cond = std::get_if<remill::Instruction::ConditionalInstruction>(
               &last_instr.instr.flows)) {
         uint64_t taken_addr = 0;
@@ -286,7 +502,8 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
           }
         }
 
-        if (branch_taken && blocks_.count(taken_addr) && blocks_.count(next_addr)) {
+        // Only branch to blocks in the same function
+        if (branch_taken && sameFunction(taken_addr) && sameFunction(next_addr)) {
           // Load the condition and create conditional branch
           auto *cond_val = builder.CreateLoad(builder.getInt8Ty(), branch_taken);
           auto *cond_bool = builder.CreateICmpNE(
@@ -305,7 +522,8 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
       if (auto *jump = std::get_if<remill::Instruction::DirectJump>(
               &last_instr.instr.flows)) {
         uint64_t target = jump->taken_flow.known_target;
-        if (blocks_.count(target)) {
+        // Only branch to blocks in the same function
+        if (sameFunction(target)) {
           builder.CreateBr(blocks_[target]);
         } else {
           // Jump outside the function - return
@@ -316,41 +534,53 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
     }
 
     case remill::Instruction::kCategoryDirectFunctionCall: {
-      // Direct function call - branch to target and set up return
+      // Direct function call - use LLVM call to helper function
       uint64_t target = last_instr.instr.branch_taken_pc;
 
-      if (blocks_.count(target) && return_blocks_.count(next_addr) &&
-          shadow_stack_ && shadow_stack_sp_) {
-        // Internal call - push index to shadow stack before branching
-        auto *ret_block = return_blocks_[next_addr];
-        uint32_t call_idx = call_site_indices_[next_addr];
+      if (helper_functions_.count(target)) {
+        // Internal call to helper function
+        auto *helper_func = helper_functions_[target];
 
-        // Push call site index to shadow stack:
-        // sp = load shadow_stack_sp
-        // shadow_stack[sp] = call_idx
-        // shadow_stack_sp = sp + 1
-        auto *sp = builder.CreateLoad(builder.getInt32Ty(), shadow_stack_sp_,
-                                       "shadow_sp");
-        auto *slot = builder.CreateInBoundsGEP(
-            shadow_stack_->getAllocatedType(), shadow_stack_,
-            {builder.getInt32(0), sp}, "shadow_slot");
-        builder.CreateStore(builder.getInt32(call_idx), slot);
-        auto *new_sp = builder.CreateAdd(sp, builder.getInt32(1), "shadow_sp_inc");
-        builder.CreateStore(new_sp, shadow_stack_sp_);
+        // Get current state and memory
+        llvm::Value *state = nullptr;
+        llvm::Value *memory = nullptr;
+        llvm::AllocaInst *memory_alloca = nullptr;
+        for (auto &inst : block->getParent()->getEntryBlock()) {
+          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+            if (alloca->getName() == "STATE") {
+              state = builder.CreateLoad(builder.getPtrTy(), alloca);
+            } else if (alloca->getName() == "MEMORY") {
+              memory_alloca = alloca;
+              memory = builder.CreateLoad(builder.getPtrTy(), alloca);
+            }
+          }
+        }
 
-        // Branch to call target
-        builder.CreateBr(blocks_[target]);
+        if (state && memory && memory_alloca) {
+          // Call the helper function with target PC
+          auto *target_pc = builder.getInt64(target);
+          auto *result = builder.CreateCall(helper_func, {state, target_pc, memory});
 
-        // Fill in the continuation block - branch to the code after the call
-        llvm::IRBuilder<> ret_builder(ret_block);
-        if (blocks_.count(next_addr)) {
-          ret_builder.CreateBr(blocks_[next_addr]);
+          // Store the returned memory pointer
+          builder.CreateStore(result, memory_alloca);
+
+          // Continue to the return address block (must be in same function)
+          if (sameFunction(next_addr)) {
+            builder.CreateBr(blocks_[next_addr]);
+          } else {
+            builder.CreateRet(result);
+          }
         } else {
-          ret_builder.CreateRet(remill::LoadMemoryPointer(ret_block, *intrinsics));
+          // Fallback
+          if (sameFunction(next_addr)) {
+            builder.CreateBr(blocks_[next_addr]);
+          } else {
+            builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+          }
         }
       } else {
         // External call - just continue to next instruction
-        if (blocks_.count(next_addr)) {
+        if (sameFunction(next_addr)) {
           builder.CreateBr(blocks_[next_addr]);
         } else {
           builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
@@ -360,81 +590,15 @@ void ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
     }
 
     case remill::Instruction::kCategoryFunctionReturn: {
-      // Return from function using shadow stack dispatch
-      // The shadow stack contains indices that map to continuation blocks.
-      // This ensures proper LIFO call semantics even after LLVM optimization.
-
-      if (return_blocks_.empty() || !shadow_stack_ || !shadow_stack_sp_) {
-        // No internal callers - just return from LLVM function
-        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
-      } else {
-        // Pop from shadow stack and dispatch:
-        // sp = load shadow_stack_sp
-        // new_sp = sp - 1
-        // idx = load shadow_stack[new_sp]
-        // shadow_stack_sp = new_sp
-        // switch(idx) { ... }
-
-        auto *sp = builder.CreateLoad(builder.getInt32Ty(), shadow_stack_sp_,
-                                       "shadow_sp_ret");
-
-        // Check if stack is empty (sp == 0) -> this is main's RET
-        auto *is_empty = builder.CreateICmpEQ(sp, builder.getInt32(0),
-                                               "shadow_stack_empty");
-
-        // Create blocks for the conditional dispatch
-        auto &context = ctx_.GetContext();
-        auto *main_ret_block = llvm::BasicBlock::Create(
-            context, "main_ret", block->getParent());
-        auto *helper_ret_block = llvm::BasicBlock::Create(
-            context, "helper_ret", block->getParent());
-
-        builder.CreateCondBr(is_empty, main_ret_block, helper_ret_block);
-
-        // Main return - return from LLVM function
-        {
-          llvm::IRBuilder<> main_builder(main_ret_block);
-          main_builder.CreateRet(remill::LoadMemoryPointer(main_ret_block, *intrinsics));
-        }
-
-        // Helper return - pop index and dispatch
-        {
-          llvm::IRBuilder<> helper_builder(helper_ret_block);
-
-          // Decrement stack pointer
-          auto *new_sp = helper_builder.CreateSub(sp, helper_builder.getInt32(1),
-                                                   "shadow_sp_dec");
-          helper_builder.CreateStore(new_sp, shadow_stack_sp_);
-
-          // Load the call site index
-          auto *slot = helper_builder.CreateInBoundsGEP(
-              shadow_stack_->getAllocatedType(), shadow_stack_,
-              {helper_builder.getInt32(0), new_sp}, "shadow_slot_ret");
-          auto *call_idx = helper_builder.CreateLoad(helper_builder.getInt32Ty(),
-                                                      slot, "call_site_idx");
-
-          // Create default block (shouldn't happen, but needed for switch)
-          auto *unreachable_block = llvm::BasicBlock::Create(
-              context, "unreachable_ret", block->getParent());
-          llvm::IRBuilder<> unreachable_builder(unreachable_block);
-          unreachable_builder.CreateUnreachable();
-
-          // Create switch to dispatch based on call site index
-          auto *switch_inst = helper_builder.CreateSwitch(
-              call_idx, unreachable_block, return_blocks_.size());
-
-          for (const auto &[addr, ret_block] : return_blocks_) {
-            uint32_t idx = call_site_indices_[addr];
-            switch_inst->addCase(helper_builder.getInt32(idx), ret_block);
-          }
-        }
-      }
+      // Return from function - use LLVM ret
+      // This returns the memory pointer
+      builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
       break;
     }
 
     default:
       // Normal instruction - fall through to next block or return
-      if (blocks_.count(next_addr)) {
+      if (sameFunction(next_addr)) {
         builder.CreateBr(blocks_[next_addr]);
       } else {
         builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));

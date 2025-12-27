@@ -89,12 +89,19 @@ Z3 is now required to be externally installed, but remill uses superbuild to han
 
 ---
 
-
-
----
-
-Xtea test. Create a new test similar to global_var_pluto_sub_5x.cpp. Take the source from src\deps\llvm-ob-passes\tests\test.c, but adapt it (remove printf, etc), encrypt and decrypt 0x1337 int and return it. Don't apply obfuscation passes just yet, let's see if xtea with constat values gets optimized away.
+I need you to refactor tests pipeline. I see lifted.ll, 7mb file created in each test directory. It mostly contains remill's defined code, very
+small part of it is actually a lifted one from the test source. I need you to split this .ll into two: one is actually lifted code from the test,
+another one is a runtime stuff coming from remill. Remill's part may be generated only once for all the tests. Obviosly to optimize code properly
+you need to link both togater, but do it in memory only.
 
 ---
 
 create new test like mov_const.asm, I need there a write to a global variable be tested
+
+---
+
+Create a new test similar to global_var.cpp. Take the source from src\deps\llvm-ob-passes\tests\test.c, leave all the comments disabling the optimization, but adapt it: remove printf; encrypt and decrypt 0x1337 int value and return it. Let's see if lifter is able to simplify it to the 0x1337 constant
+
+---
+
+

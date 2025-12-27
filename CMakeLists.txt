@@ -148,20 +148,15 @@ else()
             EXPECTED_EXIT_CODE 4919
         )
 
-        # NOTE: xtea_noinline test is disabled - requires inter-procedural pointer tracking
-        # When encrypt/decrypt are noinline, the key pointer flows through multiple stack frames:
-        # - Caller stores key ptr to its stack frame
-        # - Callee reads key ptr from ITS stack frame (different address)
-        # - This creates circular dependencies between phi resolution and memory lowering
-        # See POINTER_ANALYSIS.md for details on the limitation
-        #
-        # add_cpp_lifting_test(
-        #     NAME xtea_noinline
-        #     CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_noinline.cpp
-        #     ENTRY test_me
-        #     RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
-        #     EXPECTED_EXIT_CODE 4919
-        # )
+        # NOTE: xtea_noinline test - uses function inlining approach
+        # See FUNCTION_INLINING.md for details
+        add_cpp_lifting_test(
+            NAME xtea_noinline
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_noinline.cpp
+            ENTRY test_me
+            RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+            EXPECTED_EXIT_CODE 4919
+        )
 
         # Obfuscation pass tests (require opt and llvm-ob-passes)
         if(LLVM_OPT_EXECUTABLE)
