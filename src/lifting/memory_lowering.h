@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -52,6 +54,31 @@ struct StackBackingInfo {
 StackBackingInfo CreateStackAlloca(llvm::Function *func,
                                    uint64_t initial_rsp,
                                    uint64_t stack_size);
+
+// Tracks known pointer values through memory store/load pairs
+// Used by multi-pass lowering to handle pointer-through-memory patterns
+struct PointerTracker {
+  // Map from LLVM Value* to known constant pointer value
+  // When we lower a load and know the stored value, we record it here
+  std::map<llvm::Value*, uint64_t> known_pointer_values;
+
+  // Map from memory location VA to stored pointer value
+  // When we see write_memory_64(mem, addr, const_ptr) where const_ptr
+  // points to a known section, we record: addr -> const_ptr
+  std::map<uint64_t, uint64_t> memory_contents;
+
+  // Track a store of a pointer value to memory
+  void TrackStore(uint64_t addr, uint64_t value);
+
+  // Track the result of a load that returned a known pointer
+  void TrackLoadResult(llvm::Value *result, uint64_t value);
+
+  // Get the known pointer value for an LLVM Value, if tracked
+  std::optional<uint64_t> GetKnownValue(llvm::Value *v) const;
+
+  // Get the known pointer stored at a memory address, if tracked
+  std::optional<uint64_t> GetStoredValue(uint64_t addr) const;
+};
 
 // Lower __remill_read/write_memory_* intrinsics to actual load/store operations
 // Creates local allocas from the backing globals, allowing LLVM's SROA to optimize

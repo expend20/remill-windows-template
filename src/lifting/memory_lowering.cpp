@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/IRBuilder.h>
@@ -59,7 +60,173 @@ DecomposeAddress(llvm::Value *addr, const MemoryBackingInfo &mem_info,
   return {0, nullptr};
 }
 
+// Recursively try to find a known pointer value, following through phi nodes
+// Returns the known pointer value if ALL paths lead to the same value (or undef)
+// max_depth prevents infinite recursion on phi cycles
+std::optional<uint64_t>
+GetKnownPointerRecursive(llvm::Value *val, const PointerTracker &tracker,
+                          const MemoryBackingInfo &mem_info,
+                          const StackBackingInfo *stack_info,
+                          int max_depth = 8,
+                          llvm::SmallPtrSet<llvm::Value*, 16> *visited = nullptr) {
+  if (max_depth <= 0) {
+    return std::nullopt;
+  }
+
+  // Create visited set for cycle detection if not provided
+  llvm::SmallPtrSet<llvm::Value*, 16> local_visited;
+  if (!visited) visited = &local_visited;
+
+  // Cycle detection
+  if (visited->count(val)) {
+    return std::nullopt;  // Cycle - treat as compatible (will be skipped)
+  }
+  visited->insert(val);
+
+  // Check if directly tracked
+  if (auto known = tracker.GetKnownValue(val)) {
+    return *known;
+  }
+
+  // Check if it's a constant that's a valid section address
+  if (auto *const_int = llvm::dyn_cast<llvm::ConstantInt>(val)) {
+    uint64_t ptr_val = const_int->getZExtValue();
+    if (mem_info.FindGlobalForAddress(ptr_val).first ||
+        (stack_info && stack_info->FindStackOffset(ptr_val).first)) {
+      return ptr_val;
+    }
+  }
+
+  // Undef is compatible with any value
+  if (llvm::isa<llvm::UndefValue>(val)) {
+    return std::nullopt;  // Return nullopt but don't fail - caller handles this
+  }
+
+  // Handle phi nodes - all non-undef incoming values must agree
+  if (auto *phi = llvm::dyn_cast<llvm::PHINode>(val)) {
+    std::optional<uint64_t> common_ptr;
+
+    for (unsigned i = 0; i < phi->getNumIncomingValues(); i++) {
+      auto *incoming = phi->getIncomingValue(i);
+
+      // Skip undef values
+      if (llvm::isa<llvm::UndefValue>(incoming)) {
+        continue;
+      }
+
+      // Skip already-visited (cycle)
+      if (visited->count(incoming)) {
+        continue;
+      }
+
+      auto incoming_ptr = GetKnownPointerRecursive(incoming, tracker, mem_info,
+                                                    stack_info, max_depth - 1, visited);
+      if (!incoming_ptr) {
+        // This incoming value is not a known pointer - can't track this phi
+        return std::nullopt;
+      }
+
+      if (!common_ptr) {
+        common_ptr = *incoming_ptr;
+      } else if (*common_ptr != *incoming_ptr) {
+        // Different pointer values on different paths - can't track
+        return std::nullopt;
+      }
+    }
+
+    // If all non-undef incoming values agree (or only cycles/undef), return that value
+    if (common_ptr) {
+      return common_ptr;
+    }
+  }
+
+  return std::nullopt;
+}
+
+// Enhanced version that also checks tracked pointer values (including through phis)
+std::pair<uint64_t, llvm::Value*>
+DecomposeAddressWithTracking(llvm::Value *addr, const MemoryBackingInfo &mem_info,
+                              const StackBackingInfo *stack_info,
+                              const PointerTracker &tracker) {
+  // First try normal decomposition
+  auto result = DecomposeAddress(addr, mem_info, stack_info);
+  if (result.first != 0) {
+    return result;
+  }
+
+  // Check if addr itself is a tracked pointer value (including through phis)
+  if (auto known = GetKnownPointerRecursive(addr, tracker, mem_info, stack_info)) {
+    uint64_t ptr_val = *known;
+    // Verify it points to a known section
+    if (mem_info.FindGlobalForAddress(ptr_val).first ||
+        (stack_info && stack_info->FindStackOffset(ptr_val).first)) {
+      // Return as base with zero offset
+      auto *zero = llvm::ConstantInt::get(addr->getType(), 0);
+      return {ptr_val, zero};
+    }
+  }
+
+  // Check for (tracked_pointer + dynamic_offset) or (tracked_pointer | dynamic_offset)
+  if (auto *bin_op = llvm::dyn_cast<llvm::BinaryOperator>(addr)) {
+    unsigned opcode = bin_op->getOpcode();
+    if (opcode == llvm::Instruction::Add || opcode == llvm::Instruction::Or) {
+      llvm::Value *op0 = bin_op->getOperand(0);
+      llvm::Value *op1 = bin_op->getOperand(1);
+
+      for (int i = 0; i < 2; i++) {
+        llvm::Value *potential_base = (i == 0) ? op0 : op1;
+        llvm::Value *potential_offset = (i == 0) ? op1 : op0;
+
+        // Use recursive lookup that handles phis
+        if (auto known = GetKnownPointerRecursive(potential_base, tracker,
+                                                   mem_info, stack_info)) {
+          uint64_t ptr_val = *known;
+          if (mem_info.FindGlobalForAddress(ptr_val).first ||
+              (stack_info && stack_info->FindStackOffset(ptr_val).first)) {
+            return {ptr_val, potential_offset};
+          }
+        }
+      }
+    }
+  }
+
+  return {0, nullptr};
+}
+
 }  // anonymous namespace
+
+// PointerTracker implementation
+void PointerTracker::TrackStore(uint64_t addr, uint64_t value) {
+  memory_contents[addr] = value;
+}
+
+void PointerTracker::TrackLoadResult(llvm::Value *result, uint64_t value) {
+  known_pointer_values[result] = value;
+}
+
+std::optional<uint64_t> PointerTracker::GetKnownValue(llvm::Value *v) const {
+  auto it = known_pointer_values.find(v);
+  if (it != known_pointer_values.end()) {
+    return it->second;
+  }
+  return std::nullopt;
+}
+
+std::optional<uint64_t> PointerTracker::GetStoredValue(uint64_t addr) const {
+  auto it = memory_contents.find(addr);
+  if (it != memory_contents.end()) {
+    return it->second;
+  }
+  return std::nullopt;
+}
+
+// Check if a value is a valid section address (global or stack)
+static bool IsValidSectionAddress(uint64_t va, const MemoryBackingInfo &mem_info,
+                                   const StackBackingInfo *stack_info) {
+  if (mem_info.FindGlobalForAddress(va).first) return true;
+  if (stack_info && stack_info->FindStackOffset(va).first) return true;
+  return false;
+}
 
 std::pair<llvm::GlobalVariable *, uint64_t>
 MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
@@ -185,6 +352,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
   // Build a set of memory intrinsic functions to recognize
   std::set<llvm::Function *> read_intrinsics;
   std::set<llvm::Function *> write_intrinsics;
+  llvm::Function *read_64 = nullptr;
+  llvm::Function *write_64 = nullptr;
 
   const char *read_names[] = {
       "__remill_read_memory_8", "__remill_read_memory_16",
@@ -196,32 +365,57 @@ void LowerMemoryIntrinsics(llvm::Module *module,
   for (const char *name : read_names) {
     if (auto *f = module->getFunction(name)) {
       read_intrinsics.insert(f);
+      if (std::string(name) == "__remill_read_memory_64") {
+        read_64 = f;
+      }
     }
   }
   for (const char *name : write_names) {
     if (auto *f = module->getFunction(name)) {
       write_intrinsics.insert(f);
-    }
-  }
-
-  // Process all instructions in program order to preserve memory semantics
-  // This is critical for correctness: stores must happen before subsequent loads
-  std::vector<llvm::CallInst *> to_process;
-  for (auto &bb : *target_func) {
-    for (auto &inst : bb) {
-      if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
-        auto *callee = call->getCalledFunction();
-        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
-          to_process.push_back(call);
-        }
+      if (std::string(name) == "__remill_write_memory_64") {
+        write_64 = f;
       }
     }
   }
 
-  // Now process in program order
-  for (auto *call : to_process) {
+  // Pointer tracker for multi-pass lowering
+  PointerTracker tracker;
+
+  // Iterative processing - loop until no more progress
+  // This handles cases where pointer tracking enables lowering of previously-stuck accesses
+  constexpr int MAX_ITERATIONS = 10;
+  int iteration = 0;
+  int total_lowered = 0;
+
+  while (iteration < MAX_ITERATIONS) {
+    iteration++;
+
+    // Collect remaining memory intrinsics in program order
+    std::vector<llvm::CallInst *> to_process;
+    for (auto &bb : *target_func) {
+      for (auto &inst : bb) {
+        if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+          auto *callee = call->getCalledFunction();
+          if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+            to_process.push_back(call);
+          }
+        }
+      }
+    }
+
+    if (to_process.empty()) {
+      break;  // All done
+    }
+
+    int lowered_this_pass = 0;
+
+    // Process in program order
+    for (auto *call : to_process) {
     auto *callee = call->getCalledFunction();
     bool is_read = read_intrinsics.count(callee) > 0;
+    bool is_64bit_read = (callee == read_64);
+    bool is_64bit_write = (callee == write_64);
 
     if (is_read) {
       // Read intrinsic: __remill_read_memory_N(mem, addr) -> value
@@ -231,9 +425,11 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       llvm::Value *addr_arg = call->getArgOperand(1);
       llvm::Value *replacement = nullptr;
+      uint64_t read_address = 0;  // Track for pointer propagation
 
       if (auto *addr_const = llvm::dyn_cast<llvm::ConstantInt>(addr_arg)) {
         uint64_t address = addr_const->getZExtValue();
+        read_address = address;
 
         // Try global sections first
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
@@ -269,8 +465,9 @@ void LowerMemoryIntrinsics(llvm::Module *module,
           }
         }
       } else {
-        // Try dynamic address decomposition: base_const + dynamic_offset
-        auto [base_va, dyn_offset] = DecomposeAddress(addr_arg, memory_info, stack_info);
+        // Try dynamic address decomposition with pointer tracking
+        auto [base_va, dyn_offset] = DecomposeAddressWithTracking(
+            addr_arg, memory_info, stack_info, tracker);
         if (base_va && dyn_offset) {
           // Try global sections
           auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
@@ -332,14 +529,21 @@ void LowerMemoryIntrinsics(llvm::Module *module,
       // If we can't decompose the address as base_const + offset where base_const is in
       // a known section, we leave the access as undef.
 
-      // Fall back to undef for truly unknown addresses (shouldn't happen for well-formed lifted code)
-      if (!replacement) {
-        replacement = llvm::UndefValue::get(call->getType());
-        std::cerr << "WARNING: Could not lower memory read, using undef\n";
+      // If we successfully lowered the read, replace and erase
+      if (replacement) {
+        // Track pointer values loaded from known locations (for 64-bit reads)
+        if (is_64bit_read && read_address != 0) {
+          if (auto stored_ptr = tracker.GetStoredValue(read_address)) {
+            tracker.TrackLoadResult(replacement, *stored_ptr);
+            std::cout << "Tracked pointer: load from 0x" << std::hex << read_address
+                      << " = 0x" << *stored_ptr << std::dec << "\n";
+          }
+        }
+        call->replaceAllUsesWith(replacement);
+        call->eraseFromParent();
+        lowered_this_pass++;
       }
-
-      call->replaceAllUsesWith(replacement);
-      call->eraseFromParent();
+      // If not lowered, leave the call for next iteration (pointer tracking may help)
 
     } else {
       // Write intrinsic: __remill_write_memory_N(mem, addr, val) -> mem
@@ -353,6 +557,23 @@ void LowerMemoryIntrinsics(llvm::Module *module,
 
       if (auto *addr_const = llvm::dyn_cast<llvm::ConstantInt>(addr_arg)) {
         uint64_t address = addr_const->getZExtValue();
+
+        // Track pointer stores (for 64-bit writes of section pointers)
+        if (is_64bit_write) {
+          if (auto *val_const = llvm::dyn_cast<llvm::ConstantInt>(value_arg)) {
+            uint64_t ptr_val = val_const->getZExtValue();
+            if (IsValidSectionAddress(ptr_val, memory_info, stack_info)) {
+              tracker.TrackStore(address, ptr_val);
+              std::cout << "Tracked pointer store: [0x" << std::hex << address
+                        << "] = 0x" << ptr_val << std::dec << "\n";
+            }
+          } else if (auto known_ptr = tracker.GetKnownValue(value_arg)) {
+            // The value being stored is a tracked pointer
+            tracker.TrackStore(address, *known_ptr);
+            std::cout << "Tracked pointer store (from tracked): [0x" << std::hex << address
+                      << "] = 0x" << *known_ptr << std::dec << "\n";
+          }
+        }
 
         // Try global sections first
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
@@ -388,8 +609,9 @@ void LowerMemoryIntrinsics(llvm::Module *module,
           }
         }
       } else {
-        // Try dynamic address decomposition: base_const + dynamic_offset
-        auto [base_va, dyn_offset] = DecomposeAddress(addr_arg, memory_info, stack_info);
+        // Try dynamic address decomposition with pointer tracking
+        auto [base_va, dyn_offset] = DecomposeAddressWithTracking(
+            addr_arg, memory_info, stack_info, tracker);
         if (base_va && dyn_offset) {
           // Try global sections
           auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
@@ -448,16 +670,71 @@ void LowerMemoryIntrinsics(llvm::Module *module,
       // NOTE: We intentionally do NOT have a fallback for arbitrary dynamic addresses.
       // See the comment in the read handling section above.
 
-      // Write intrinsics return the memory pointer (first argument)
-      call->replaceAllUsesWith(call->getArgOperand(0));
-      call->eraseFromParent();
+      // Only erase if we successfully lowered
+      if (lowered) {
+        // Write intrinsics return the memory pointer (first argument)
+        call->replaceAllUsesWith(call->getArgOperand(0));
+        call->eraseFromParent();
+        lowered_this_pass++;
+      }
+      // If not lowered, leave the call for next iteration (pointer tracking may help)
+    }
+  }
 
-      if (!lowered) {
-        // Unknown address - write is dropped (becomes no-op)
-        std::cerr << "WARNING: Could not lower memory write, dropped\n";
+    total_lowered += lowered_this_pass;
+    std::cout << "Iteration " << iteration << ": lowered " << lowered_this_pass
+              << " memory intrinsics (total: " << total_lowered << ")\n";
+
+    // No progress means we can't lower any more
+    if (lowered_this_pass == 0) {
+      break;
+    }
+  }
+
+  // After all iterations, check for remaining intrinsics and warn
+  int remaining = 0;
+  for (auto &bb : *target_func) {
+    for (auto &inst : bb) {
+      if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+        auto *callee = call->getCalledFunction();
+        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+          remaining++;
+          std::cerr << "WARNING: Could not lower memory intrinsic: ";
+          call->print(llvm::errs());
+          std::cerr << "\n";
+
+          // Replace with undef/noop so code can still run
+          if (read_intrinsics.count(callee)) {
+            call->replaceAllUsesWith(llvm::UndefValue::get(call->getType()));
+          } else {
+            call->replaceAllUsesWith(call->getArgOperand(0));
+          }
+        }
       }
     }
   }
+
+  // Erase remaining intrinsics (we already replaced their uses)
+  std::vector<llvm::CallInst*> to_erase;
+  for (auto &bb : *target_func) {
+    for (auto &inst : bb) {
+      if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+        auto *callee = call->getCalledFunction();
+        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+          to_erase.push_back(call);
+        }
+      }
+    }
+  }
+  for (auto *call : to_erase) {
+    call->eraseFromParent();
+  }
+
+  if (remaining > 0) {
+    std::cerr << "WARNING: " << remaining << " memory intrinsics could not be lowered\n";
+  }
+  std::cout << "Memory lowering complete: " << total_lowered << " intrinsics lowered in "
+            << iteration << " iterations\n";
 }
 
 // NOTE: This function is NOT USED. Kept for reference only.
