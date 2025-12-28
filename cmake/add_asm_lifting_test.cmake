@@ -1,12 +1,18 @@
 # add_asm_lifting_test(
 #   NAME <test_name>
 #   ASM <path_to_asm>
+#   ENTRY <entry_point>  # Optional, defaults to "main"
 #   RUNNER_SRC <path_to_test_main.cpp>
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
 # Note: Uses the shared 'lifter' target defined in CMakeLists.txt
 function(add_asm_lifting_test)
-    cmake_parse_arguments(ARG "" "NAME;ASM;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "NAME;ASM;ENTRY;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+
+    # Default entry point to "main" if not specified
+    if(NOT ARG_ENTRY)
+        set(ARG_ENTRY "main")
+    endif()
 
     set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
@@ -28,10 +34,10 @@ function(add_asm_lifting_test)
     # Link .obj -> .exe
     add_custom_command(
         OUTPUT ${EXE_FILE}
-        COMMAND ${MSVC_LINK_EXECUTABLE} /nologo /SUBSYSTEM:CONSOLE /ENTRY:main
+        COMMAND ${MSVC_LINK_EXECUTABLE} /nologo /SUBSYSTEM:CONSOLE /ENTRY:${ARG_ENTRY}
             /OUT:${EXE_FILE} ${OBJ_FILE} kernel32.lib
         DEPENDS ${OBJ_FILE}
-        COMMENT "[${ARG_NAME}] Linking shellcode.exe..."
+        COMMENT "[${ARG_NAME}] Linking shellcode.exe with entry ${ARG_ENTRY}..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 

@@ -25,7 +25,8 @@
       "mcp__discourse__discourse_list_categories",
       "mcp__discourse__discourse_create_topic",
       "Bash(./build/tests/indirect_jmp/indirect_jmp_lifter.exe)",
-      "Bash(./indirect_jmp_lifter.exe)"
+      "Bash(./indirect_jmp_lifter.exe)",
+      "Bash(./build/lifter.exe:*)"
     ]
   }
 }

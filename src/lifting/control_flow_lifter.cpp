@@ -5,9 +5,12 @@
 #include <sstream>
 #include <variant>
 
+#include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Transforms/IPO/ModuleInliner.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <remill/BC/Util.h>
 
@@ -20,6 +23,60 @@ ControlFlowLifter::ControlFlowLifter(LiftingContext &ctx)
 
 void ControlFlowLifter::SetIterativeConfig(const IterativeLiftingConfig &config) {
   config_ = config;
+}
+
+void ControlFlowLifter::SetPEInfo(const utils::PEInfo *pe_info) {
+  pe_info_ = pe_info;
+}
+
+std::optional<uint64_t> ControlFlowLifter::EvaluateBinaryOp(
+    llvm::Instruction::BinaryOps opcode, uint64_t lhs, uint64_t rhs) {
+  switch (opcode) {
+    case llvm::Instruction::Add:
+      return lhs + rhs;
+    case llvm::Instruction::Sub:
+      return lhs - rhs;
+    case llvm::Instruction::Mul:
+      return lhs * rhs;
+    case llvm::Instruction::And:
+      return lhs & rhs;
+    case llvm::Instruction::Or:
+      return lhs | rhs;
+    case llvm::Instruction::Xor:
+      return lhs ^ rhs;
+    case llvm::Instruction::Shl:
+      return lhs << rhs;
+    case llvm::Instruction::LShr:
+      return lhs >> rhs;
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<uint64_t> ControlFlowLifter::ReadQwordFromPESections(
+    uint64_t masked_offset) const {
+  if (!pe_info_) {
+    return std::nullopt;
+  }
+
+  for (const auto &section : pe_info_->sections) {
+    uint64_t section_va = pe_info_->image_base + section.virtual_address;
+    uint64_t masked_base = section_va & 0xFFFFF;
+
+    if (masked_offset >= masked_base &&
+        masked_offset < masked_base + section.bytes.size()) {
+      size_t section_offset = masked_offset - masked_base;
+      if (section_offset + 8 <= section.bytes.size()) {
+        uint64_t value = 0;
+        for (int i = 0; i < 8; ++i) {
+          value |= static_cast<uint64_t>(section.bytes[section_offset + i])
+                   << (i * 8);
+        }
+        return value;
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 const IterativeLiftingState &ControlFlowLifter::GetIterationState() const {
@@ -42,6 +99,7 @@ void ControlFlowLifter::ClearState() {
   iter_state_.pending_blocks.clear();
   iter_state_.unresolved_indirect_jumps.clear();
   iter_state_.block_discovery_iteration.clear();
+
 }
 
 bool ControlFlowLifter::IsValidCodeAddress(uint64_t addr) const {
@@ -539,6 +597,148 @@ std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
     return new_targets;
   }
 
+  // First, inline all helper functions so memory operations are visible
+  // This is needed because PUSH/RET semantics are in separate functions
+  {
+    // Mark all internal functions as always_inline
+    for (auto &func : *cloned_module) {
+      if (func.isDeclaration()) continue;
+      if (&func == cloned_func) continue;
+      func.addFnAttr(llvm::Attribute::AlwaysInline);
+    }
+
+    // Run inlining pass using new pass manager
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+
+    llvm::PassBuilder pb;
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+    llvm::ModulePassManager mpm;
+    mpm.addPass(llvm::ModuleInlinerPass(llvm::getInlineParams(10000)));
+    mpm.run(*cloned_module, mam);
+
+    if (config_.verbose) {
+      std::cout << "Inlined helper functions for SCCP resolution\n";
+    }
+  }
+
+  // Replace memory intrinsics with actual load/store to a global memory array
+  // This allows SCCP to propagate constants through stack operations
+  {
+    // Create a global array to represent memory
+    // Size needs to accommodate both stack operations (low addresses masked to 0xFFFF)
+    // and PE section data (if available)
+    constexpr size_t SYMBOLIC_MEMORY_SIZE = 0x100000;  // 1MB should be enough
+    auto *mem_type = llvm::ArrayType::get(
+        llvm::Type::getInt8Ty(cloned_module->getContext()), SYMBOLIC_MEMORY_SIZE);
+
+    // Initialize memory with zeros, then overlay PE section data if available
+    std::vector<uint8_t> mem_init(SYMBOLIC_MEMORY_SIZE, 0);
+
+    // If we have PE info, populate the symbolic memory with actual section data
+    // This allows SCCP to resolve jump targets stored in global variables
+    if (pe_info_) {
+      for (const auto &section : pe_info_->sections) {
+        uint64_t section_va = pe_info_->image_base + section.virtual_address;
+        // Map to lower addresses by masking - same as the read/write replacement below
+        uint64_t masked_base = section_va & 0xFFFFF;  // Mask to 1MB range
+
+        if (config_.verbose) {
+          std::cout << "Initializing symbolic memory for section " << section.name
+                    << " at VA 0x" << std::hex << section_va
+                    << " (masked: 0x" << masked_base << ")" << std::dec << "\n";
+        }
+
+        for (size_t i = 0; i < section.bytes.size() && (masked_base + i) < SYMBOLIC_MEMORY_SIZE; ++i) {
+          mem_init[masked_base + i] = section.bytes[i];
+        }
+      }
+    }
+
+    // Create constant initializer from the byte array
+    auto *init_data = llvm::ConstantDataArray::get(
+        cloned_module->getContext(), llvm::ArrayRef<uint8_t>(mem_init));
+    // Note: Can't mark as constant because we also write to it for stack ops
+    auto *mem_global = new llvm::GlobalVariable(
+        *cloned_module, mem_type, false, llvm::GlobalValue::InternalLinkage,
+        init_data, "symbolic_memory");
+
+    // Collect memory intrinsic calls
+    std::vector<llvm::CallInst*> write_calls;
+    std::vector<llvm::CallInst*> read_calls;
+
+    for (auto &func : *cloned_module) {
+      for (auto &bb : func) {
+        for (auto &inst : bb) {
+          if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+            auto *callee = call->getCalledFunction();
+            if (!callee) continue;
+            std::string name = callee->getName().str();
+            if (name.find("__remill_write_memory_64") != std::string::npos) {
+              write_calls.push_back(call);
+            } else if (name.find("__remill_read_memory_64") != std::string::npos) {
+              read_calls.push_back(call);
+            }
+          }
+        }
+      }
+    }
+
+    // Replace write_memory_64 calls: (memory, addr, value) -> store value
+    for (auto *call : write_calls) {
+      if (call->arg_size() < 3) continue;
+      llvm::Value *addr = call->getArgOperand(1);
+      llvm::Value *value = call->getArgOperand(2);
+
+      llvm::IRBuilder<> builder(call);
+      // Mask address to fit in our array (1MB = 0xFFFFF)
+      auto *masked = builder.CreateAnd(addr, builder.getInt64(0xFFFFF));
+      auto *ptr = builder.CreateGEP(mem_type, mem_global,
+                                    {builder.getInt64(0), masked});
+      auto *typed_ptr = builder.CreateBitCast(ptr, builder.getInt64Ty()->getPointerTo());
+      builder.CreateStore(value, typed_ptr);
+
+      // Replace uses with original memory pointer
+      call->replaceAllUsesWith(call->getArgOperand(0));
+    }
+
+    // Replace read_memory_64 calls: (memory, addr) -> load
+    for (auto *call : read_calls) {
+      if (call->arg_size() < 2) continue;
+      llvm::Value *addr = call->getArgOperand(1);
+
+      llvm::IRBuilder<> builder(call);
+      // Mask address to fit in our array (1MB = 0xFFFFF)
+      auto *masked = builder.CreateAnd(addr, builder.getInt64(0xFFFFF));
+      auto *ptr = builder.CreateGEP(mem_type, mem_global,
+                                    {builder.getInt64(0), masked});
+      auto *typed_ptr = builder.CreateBitCast(ptr, builder.getInt64Ty()->getPointerTo());
+      auto *loaded = builder.CreateLoad(builder.getInt64Ty(), typed_ptr);
+
+      call->replaceAllUsesWith(loaded);
+    }
+
+    // Remove the original calls
+    for (auto *call : write_calls) {
+      call->eraseFromParent();
+    }
+    for (auto *call : read_calls) {
+      call->eraseFromParent();
+    }
+
+    if (config_.verbose) {
+      std::cout << "Replaced " << write_calls.size() << " memory writes and "
+                << read_calls.size() << " memory reads\n";
+    }
+  }
+
   // Run SCCP on the cloned module to fold computations
   if (config_.verbose) {
     std::cout << "Running SCCP on cloned function to resolve indirect jumps...\n";
@@ -555,6 +755,25 @@ std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
   // The switch may have been optimized away, but the final PC value should be computable.
   // Find stores to PC (state->rip at offset 2472) and trace back the value.
 
+  // Helper to extract the offset from a symbolic memory load instruction
+  auto getSymbolicMemoryOffset = [](llvm::LoadInst *load) -> llvm::Value* {
+    auto *ptr = load->getPointerOperand();
+
+    // Check for bitcast of GEP into symbolic_memory
+    if (auto *bitcast = llvm::dyn_cast<llvm::BitCastInst>(ptr)) {
+      ptr = bitcast->getOperand(0);
+    }
+
+    auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr);
+    if (!gep || gep->getNumIndices() != 2) return nullptr;
+
+    auto *base = gep->getPointerOperand();
+    auto *global = llvm::dyn_cast<llvm::GlobalVariable>(base);
+    if (!global || global->getName() != "symbolic_memory") return nullptr;
+
+    return gep->getOperand(2);
+  };
+
   // Helper to evaluate a value, substituting program_counter argument with entry_point
   std::function<std::optional<uint64_t>(llvm::Value*)> evaluateValue;
   evaluateValue = [&](llvm::Value *val) -> std::optional<uint64_t> {
@@ -565,10 +784,8 @@ std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
 
     // Function argument - check if it's program_counter (arg 1)
     if (auto *arg = llvm::dyn_cast<llvm::Argument>(val)) {
-      if (arg->getArgNo() == 1) {  // program_counter
-        return entry_point_;
-      }
-      return std::nullopt;
+      return (arg->getArgNo() == 1) ? std::optional<uint64_t>(entry_point_)
+                                    : std::nullopt;
     }
 
     // Binary operation
@@ -576,38 +793,36 @@ std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
       auto lhs = evaluateValue(binop->getOperand(0));
       auto rhs = evaluateValue(binop->getOperand(1));
       if (!lhs || !rhs) return std::nullopt;
+      return EvaluateBinaryOp(binop->getOpcode(), *lhs, *rhs);
+    }
 
-      switch (binop->getOpcode()) {
-        case llvm::Instruction::Add:
-          return *lhs + *rhs;
-        case llvm::Instruction::Sub:
-          return *lhs - *rhs;
-        case llvm::Instruction::Mul:
-          return *lhs * *rhs;
-        case llvm::Instruction::And:
-          return *lhs & *rhs;
-        case llvm::Instruction::Or:
-          return *lhs | *rhs;
-        case llvm::Instruction::Xor:
-          return *lhs ^ *rhs;
-        case llvm::Instruction::Shl:
-          return *lhs << *rhs;
-        case llvm::Instruction::LShr:
-          return *lhs >> *rhs;
-        default:
-          return std::nullopt;
+    // Cast operations - evaluate operand
+    if (auto *cast = llvm::dyn_cast<llvm::CastInst>(val)) {
+      if (llvm::isa<llvm::TruncInst>(val) || llvm::isa<llvm::ZExtInst>(val) ||
+          llvm::isa<llvm::SExtInst>(val)) {
+        return evaluateValue(cast->getOperand(0));
       }
     }
 
-    // Trunc/ZExt/SExt - evaluate operand
-    if (auto *trunc = llvm::dyn_cast<llvm::TruncInst>(val)) {
-      return evaluateValue(trunc->getOperand(0));
-    }
-    if (auto *zext = llvm::dyn_cast<llvm::ZExtInst>(val)) {
-      return evaluateValue(zext->getOperand(0));
-    }
-    if (auto *sext = llvm::dyn_cast<llvm::SExtInst>(val)) {
-      return evaluateValue(sext->getOperand(0));
+    // Load from symbolic_memory - evaluate the address and look up the value
+    if (auto *load = llvm::dyn_cast<llvm::LoadInst>(val)) {
+      if (auto *offset_val = getSymbolicMemoryOffset(load)) {
+        std::optional<uint64_t> offset;
+        if (auto *ci = llvm::dyn_cast<llvm::ConstantInt>(offset_val)) {
+          offset = ci->getZExtValue();
+        } else {
+          offset = evaluateValue(offset_val);
+        }
+
+        if (offset) {
+          auto value = ReadQwordFromPESections(*offset);
+          if (value && config_.verbose) {
+            std::cout << "  Evaluated load from symbolic_memory offset 0x"
+                      << std::hex << *offset << " = 0x" << *value << std::dec << "\n";
+          }
+          return value;
+        }
+      }
     }
 
     return std::nullopt;
@@ -1376,9 +1591,38 @@ llvm::SwitchInst *ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
     }
 
     case remill::Instruction::kCategoryFunctionReturn: {
-      // Return from function - use LLVM ret
-      // This returns the memory pointer
-      builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+      // Treat RET like an indirect jump - create a switch over PC
+      // SCCP will resolve the target by propagating constants through memory operations
+      llvm::Value *target_pc = remill::LoadProgramCounter(block, *intrinsics);
+
+      if (target_pc) {
+        // Create dispatch block for the switch
+        auto *dispatch_block = llvm::BasicBlock::Create(
+            ctx_.GetContext(), "ret_dispatch", block->getParent());
+        builder.CreateBr(dispatch_block);
+
+        llvm::IRBuilder<> dispatch_builder(dispatch_block);
+
+        // Create default block that returns (for truly external returns)
+        auto *default_block = llvm::BasicBlock::Create(
+            ctx_.GetContext(), "ret_default", block->getParent());
+        llvm::IRBuilder<> default_builder(default_block);
+        default_builder.CreateRet(remill::LoadMemoryPointer(default_block, *intrinsics));
+
+        // Create switch - cases will be added incrementally as targets are discovered
+        auto *sw = dispatch_builder.CreateSwitch(target_pc, default_block, 0);
+
+        // Track this switch for resolution (same as indirect jumps)
+        iter_state_.unresolved_indirect_jumps[block_addr] = sw;
+
+        if (config_.verbose) {
+          std::cout << "Created RET switch at 0x" << std::hex << block_addr
+                    << std::dec << " (will be resolved by SCCP)\n";
+        }
+      } else {
+        // Fallback: just return
+        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+      }
       break;
     }
 

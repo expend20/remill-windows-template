@@ -128,6 +128,22 @@ else()
         EXPECTED_EXIT_CODE 4919
     )
 
+    add_asm_lifting_test(
+        NAME indirect_jmp_push_ret
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_jmp.asm
+        ENTRY push_ret
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_jmp_table
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_jmp.asm
+        ENTRY jump_table_test
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
 

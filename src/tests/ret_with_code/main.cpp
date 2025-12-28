@@ -65,10 +65,13 @@ int main(int argc, char **argv) {
   // Use control flow-aware lifter to handle jumps and loops
   lifting::ControlFlowLifter lifter(ctx);
 
+  // Set PE info for resolving indirect jumps through global variables
+  lifter.SetPEInfo(&(*pe_info));
+
   // Configure iterative lifting with debug output
   lifting::IterativeLiftingConfig lift_config;
   lift_config.max_iterations = 10;
-  lift_config.verbose = false;
+  lift_config.verbose = true;
 
   // Derive output directory from input path for iteration dumps
   std::string input_path = shellcode_path;

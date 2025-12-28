@@ -10,6 +10,8 @@
 #include <remill/Arch/Instruction.h>
 
 #include <llvm/IR/BasicBlock.h>
+
+#include "utils/pe_reader.h"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Value.h>
@@ -55,6 +57,9 @@ class ControlFlowLifter {
 
   // Configure iterative lifting behavior
   void SetIterativeConfig(const IterativeLiftingConfig &config);
+
+  // Set PE info for resolving indirect jumps through global variables
+  void SetPEInfo(const utils::PEInfo *pe_info);
 
   // Get iteration statistics (for debugging)
   const IterativeLiftingState &GetIterationState() const;
@@ -112,6 +117,13 @@ class ControlFlowLifter {
   // Evaluate an LLVM Value assuming program_counter = entry_point_
   // Used to resolve switch selectors before inlining
   std::optional<int64_t> EvaluateWithKnownPC(llvm::Value *val);
+
+  // Helper for evaluating binary operations
+  static std::optional<uint64_t> EvaluateBinaryOp(
+      llvm::Instruction::BinaryOps opcode, uint64_t lhs, uint64_t rhs);
+
+  // Read a qword from PE section data at the given masked offset
+  std::optional<uint64_t> ReadQwordFromPESections(uint64_t masked_offset) const;
 
   // Check if an address is valid for decoding
   bool IsValidCodeAddress(uint64_t addr) const;
@@ -175,6 +187,9 @@ class ControlFlowLifter {
 
   // Track dispatch blocks created for indirect jumps
   std::map<uint64_t, llvm::BasicBlock *> dispatch_blocks_;
+
+  // PE info for reading global variables during indirect jump resolution
+  const utils::PEInfo *pe_info_ = nullptr;
 };
 
 }  // namespace lifting
