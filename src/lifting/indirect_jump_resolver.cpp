@@ -11,6 +11,7 @@
 
 #include "control_flow_lifter.h"
 #include "optimization/optimizer.h"
+#include "utils/debug_flag.h"
 
 namespace lifting {
 
@@ -160,18 +161,14 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
   auto *original_module = main_func->getParent();
   auto cloned_module = llvm::CloneModule(*original_module);
   if (!cloned_module) {
-    if (config_.verbose) {
-      std::cerr << "Failed to clone module for SCCP resolution\n";
-    }
+    utils::dbg() << "Failed to clone module for SCCP resolution\n";
     return new_targets;
   }
 
   // Find the cloned main function
   auto *cloned_func = cloned_module->getFunction(main_func->getName());
   if (!cloned_func) {
-    if (config_.verbose) {
-      std::cerr << "Failed to find cloned function\n";
-    }
+    utils::dbg() << "Failed to find cloned function\n";
     return new_targets;
   }
 
@@ -201,9 +198,7 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
     mpm.addPass(llvm::ModuleInlinerPass(llvm::getInlineParams(10000)));
     mpm.run(*cloned_module, mam);
 
-    if (config_.verbose) {
-      std::cout << "Inlined helper functions for SCCP resolution\n";
-    }
+    utils::dbg() << "Inlined helper functions for SCCP resolution\n";
   }
 
   // Replace memory intrinsics with actual load/store to a global memory array
@@ -220,11 +215,9 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
         uint64_t section_va = pe_info_->image_base + section.virtual_address;
         uint64_t masked_base = section_va & 0xFFFFF;
 
-        if (config_.verbose) {
-          std::cout << "Initializing symbolic memory for section " << section.name
-                    << " at VA 0x" << std::hex << section_va
-                    << " (masked: 0x" << masked_base << ")" << std::dec << "\n";
-        }
+        utils::dbg() << "Initializing symbolic memory for section " << section.name
+                     << " at VA " << llvm::format_hex(section_va, 0)
+                     << " (masked: " << llvm::format_hex(masked_base, 0) << ")\n";
 
         for (size_t i = 0; i < section.bytes.size() && (masked_base + i) < SYMBOLIC_MEMORY_SIZE; ++i) {
           mem_init[masked_base + i] = section.bytes[i];
@@ -298,21 +291,17 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
       call->eraseFromParent();
     }
 
-    if (config_.verbose) {
-      std::cout << "Replaced " << write_calls.size() << " memory writes and "
-                << read_calls.size() << " memory reads\n";
-    }
+    utils::dbg() << "Replaced " << write_calls.size() << " memory writes and "
+                 << read_calls.size() << " memory reads\n";
   }
 
   // Run SCCP on the cloned module
-  if (config_.verbose) {
-    std::cout << "Running SCCP on cloned function to resolve indirect jumps...\n";
-    std::cout << "  Dispatch blocks to check: ";
-    for (auto &[name, addr] : dispatch_name_to_addr) {
-      std::cout << name << "->0x" << std::hex << addr << " " << std::dec;
-    }
-    std::cout << "\n";
+  utils::dbg() << "Running SCCP on cloned function to resolve indirect jumps...\n";
+  utils::dbg() << "  Dispatch blocks to check: ";
+  for (auto &[name, addr] : dispatch_name_to_addr) {
+    utils::dbg() << name << "->" << llvm::format_hex(addr, 0) << " ";
   }
+  utils::dbg() << "\n";
 
   optimization::OptimizeForResolution(cloned_module.get(), cloned_func);
 
@@ -371,9 +360,9 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
 
         if (offset) {
           auto value = ReadQwordFromPESections(*offset);
-          if (value && config_.verbose) {
-            std::cout << "  Evaluated load from symbolic_memory offset 0x"
-                      << std::hex << *offset << " = 0x" << *value << std::dec << "\n";
+          if (value) {
+            utils::dbg() << "  Evaluated load from symbolic_memory offset "
+                         << llvm::format_hex(*offset, 0) << " = " << llvm::format_hex(*value, 0) << "\n";
           }
           return value;
         }
@@ -414,10 +403,8 @@ std::set<uint64_t> IndirectJumpResolver::ResolveIndirectJumps(
                 !lifted_blocks.count(target) &&
                 !new_targets.count(target)) {
 
-              if (config_.verbose) {
-                std::cout << "Discovered target 0x" << std::hex << target
-                          << " from PC store\n" << std::dec;
-              }
+              utils::dbg() << "Discovered target " << llvm::format_hex(target, 0)
+                           << " from PC store\n";
 
               new_targets.insert(target);
             }

@@ -25,6 +25,7 @@ add_library(lifting_common STATIC
     src/lifting/memory_lowering.cpp
     src/optimization/optimizer.cpp
     src/optimization/stack_slot_splitter.cpp
+    src/utils/debug_flag.cpp
     src/utils/module_utils.cpp
     src/utils/pe_reader.cpp
 )
@@ -396,7 +397,7 @@ else()
                 NAME xtea_flattening
                 CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_flattening.cpp
                 ENTRY test_me
-                PASSES "lower-switch,pluto-flattening"
+                PASSES "pluto-flattening"
                 RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
                 EXPECTED_EXIT_CODE 4919
             )

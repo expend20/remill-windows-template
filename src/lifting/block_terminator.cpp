@@ -3,9 +3,11 @@
 #include <iostream>
 
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/Support/Format.h>
 #include <remill/BC/Util.h>
 
 #include "lifting_context.h"
+#include "utils/debug_flag.h"
 
 namespace lifting {
 
@@ -165,10 +167,8 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
 
         iter_state.unresolved_indirect_jumps[block_addr] = sw;
 
-        if (config_.verbose) {
-          std::cout << "Created RET switch at 0x" << std::hex << block_addr
-                    << std::dec << " (will be resolved by SCCP)\n";
-        }
+        utils::dbg() << "Created RET switch at " << llvm::format_hex(block_addr, 0)
+                     << " (will be resolved by SCCP)\n";
       } else {
         builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
       }
@@ -219,10 +219,8 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
           iter_state.unresolved_indirect_jumps[block_addr] = sw;
           dispatch_blocks[block_addr] = dispatch_block;
 
-          if (config_.verbose) {
-            std::cout << "Created indirect jump switch with " << targets.size()
-                      << " known targets\n";
-          }
+          utils::dbg() << "Created indirect jump switch with " << targets.size()
+                       << " known targets\n";
         } else {
           builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
         }

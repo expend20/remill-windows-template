@@ -30,7 +30,6 @@ struct DecodedInstruction {
 // Configuration for iterative lifting
 struct IterativeLiftingConfig {
   int max_iterations = 10;
-  bool verbose = false;  // Debug output
   std::string dump_iterations_dir;  // If non-empty, dump IR after each iteration to this directory
 };
 

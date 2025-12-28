@@ -13,6 +13,7 @@
 #include "function_splitter.h"
 #include "indirect_jump_resolver.h"
 #include "optimization/optimizer.h"
+#include "utils/debug_flag.h"
 
 namespace lifting {
 
@@ -187,10 +188,8 @@ bool ControlFlowLifter::LiftPendingBlocks() {
     }
 
     if (!blocks_.count(block_addr)) {
-      if (config_.verbose) {
-        std::cerr << "Warning: no LLVM block for address 0x" << std::hex
-                  << block_addr << std::dec << "\n";
-      }
+      utils::dbg() << "Warning: no LLVM block for address 0x"
+                   << llvm::format_hex(block_addr, 0) << "\n";
       continue;
     }
 
@@ -281,11 +280,8 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   int iteration = 0;
   while (!iter_state_.pending_blocks.empty() &&
          iteration < config_.max_iterations) {
-    if (config_.verbose) {
-      std::cout << "\n=== Iteration " << iteration << " ===" << std::endl;
-      std::cout << "Pending blocks: " << iter_state_.pending_blocks.size()
-                << std::endl;
-    }
+    utils::dbg() << "\n=== Iteration " << iteration << " ===\n";
+    utils::dbg() << "Pending blocks: " << iter_state_.pending_blocks.size() << "\n";
 
     // Phase 1: Discover blocks reachable from pending
     std::set<uint64_t> to_process = iter_state_.pending_blocks;
@@ -297,10 +293,8 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
                                       call_return_addrs_, iter_state_);
     }
 
-    if (config_.verbose) {
-      std::cout << "Discovered " << block_starts_.size()
-                << " total blocks so far" << std::endl;
-    }
+    utils::dbg() << "Discovered " << block_starts_.size()
+                 << " total blocks so far\n";
 
     // Phase 2: Assign blocks to functions
     FunctionSplitter::AssignBlocksToFunctions(
@@ -384,10 +378,8 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
     // Phase 6: Resolve indirect jumps
     std::set<uint64_t> new_targets = ResolveIndirectJumps();
 
-    if (config_.verbose) {
-      std::cout << "Found " << new_targets.size() << " new targets from "
-                << "resolved indirect jumps" << std::endl;
-    }
+    utils::dbg() << "Found " << new_targets.size() << " new targets from "
+                 << "resolved indirect jumps\n";
 
     for (uint64_t target : new_targets) {
       if (!iter_state_.lifted_blocks.count(target)) {
@@ -411,10 +403,8 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   std::cout << "Lifting completed: " << iteration << " iterations, "
             << iter_state_.lifted_blocks.size() << " blocks\n";
 
-  if (config_.verbose) {
-    std::cout << "Unresolved indirect jumps: "
-              << iter_state_.unresolved_indirect_jumps.size() << std::endl;
-  }
+  utils::dbg() << "Unresolved indirect jumps: "
+               << iter_state_.unresolved_indirect_jumps.size() << "\n";
 
   return true;
 }

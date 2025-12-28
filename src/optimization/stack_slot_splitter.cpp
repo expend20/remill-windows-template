@@ -5,13 +5,12 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <map>
 #include <set>
 
-#define DEBUG_TYPE "stack-slot-splitter"
+#include "utils/debug_flag.h"
 
 using namespace llvm;
 
@@ -29,7 +28,7 @@ bool hasMemcpyInitializer(AllocaInst *Alloca) {
       if (MI->getDest() == Alloca) {
         // Check if source is a global constant
         if (isa<GlobalVariable>(MI->getSource()->stripPointerCasts())) {
-          errs() << "StackSlotSplitter: Skipping alloca - initialized by memcpy from global\n";
+          utils::dbg() << "StackSlotSplitter: Skipping alloca - initialized by memcpy from global\n";
           return true;
         }
       }
@@ -41,7 +40,7 @@ bool hasMemcpyInitializer(AllocaInst *Alloca) {
           if (auto *MI = dyn_cast<MemCpyInst>(GU)) {
             if (MI->getDest() == GEP) {
               if (isa<GlobalVariable>(MI->getSource()->stripPointerCasts())) {
-                errs() << "StackSlotSplitter: Skipping alloca - initialized by memcpy from global (via GEP)\n";
+                utils::dbg() << "StackSlotSplitter: Skipping alloca - initialized by memcpy from global (via GEP)\n";
                 return true;
               }
             }
@@ -100,8 +99,8 @@ bool getDynamicOffsetRange(GetElementPtrInst *GEP, const DataLayout &DL,
             int64_t Base = BaseConst->getSExtValue();
             MinOffset = Base;
             MaxOffset = Base + 16;
-            errs() << "StackSlotSplitter: Found dynamic range [" << MinOffset
-                   << ", " << MaxOffset << "] from add pattern\n";
+            utils::dbg() << "StackSlotSplitter: Found dynamic range [" << MinOffset
+                         << ", " << MaxOffset << "] from add pattern\n";
             return true;
           }
         }
@@ -120,8 +119,8 @@ bool getDynamicOffsetRange(GetElementPtrInst *GEP, const DataLayout &DL,
             int64_t Base = BaseConst->getSExtValue();
             MinOffset = Base;
             MaxOffset = Base + 16;
-            errs() << "StackSlotSplitter: Found dynamic range [" << MinOffset
-                   << ", " << MaxOffset << "] from or pattern\n";
+            utils::dbg() << "StackSlotSplitter: Found dynamic range [" << MinOffset
+                         << ", " << MaxOffset << "] from or pattern\n";
             return true;
           }
         }
@@ -145,8 +144,8 @@ bool getDynamicOffsetRange(GetElementPtrInst *GEP, const DataLayout &DL,
               int64_t Base = BaseConst->getSExtValue();
               MinOffset = Base;
               MaxOffset = Base + 16;
-              errs() << "StackSlotSplitter: Found dynamic range [" << MinOffset
-                     << ", " << MaxOffset << "] from zext pattern\n";
+              utils::dbg() << "StackSlotSplitter: Found dynamic range [" << MinOffset
+                           << ", " << MaxOffset << "] from zext pattern\n";
               return true;
             }
           }
@@ -174,8 +173,8 @@ void collectSlotAccesses(AllocaInst *Alloca, const DataLayout &DL,
       int64_t MinOffset, MaxOffset;
       if (getDynamicOffsetRange(GEP, DL, MinOffset, MaxOffset)) {
         DynamicRanges.push_back({MinOffset, MaxOffset});
-        LLVM_DEBUG(dbgs() << "StackSlotSplitter: Found dynamic range ["
-                          << MinOffset << ", " << MaxOffset << "]\n");
+        utils::dbg() << "StackSlotSplitter: Found dynamic range ["
+                     << MinOffset << ", " << MaxOffset << "]\n";
       }
       continue;
     }
@@ -241,9 +240,9 @@ void removeOverlappingSlots(std::map<int64_t, SlotInfo> &Slots,
   for (auto &[Offset, Info] : Slots) {
     for (auto &[DynMin, DynMax] : DynamicRanges) {
       if (slotsOverlap(Offset, Info.AccessSize, DynMin, DynMax - DynMin)) {
-        LLVM_DEBUG(dbgs() << "StackSlotSplitter: Removing slot at " << Offset
-                          << " due to overlap with dynamic range [" << DynMin
-                          << ", " << DynMax << "]\n");
+        utils::dbg() << "StackSlotSplitter: Removing slot at " << Offset
+                     << " due to overlap with dynamic range [" << DynMin
+                     << ", " << DynMax << "]\n";
         ToRemove.insert(Offset);
         break;
       }
@@ -264,8 +263,8 @@ bool splitByteArrayAlloca(AllocaInst *Alloca, const DataLayout &DL) {
   if (!ArrayTy->getElementType()->isIntegerTy(8))
     return false;
 
-  errs() << "StackSlotSplitter: Processing byte array alloca ["
-         << ArrayTy->getNumElements() << " x i8]\n";
+  utils::dbg() << "StackSlotSplitter: Processing byte array alloca ["
+               << ArrayTy->getNumElements() << " x i8]\n";
 
   // Skip allocas that are initialized via memcpy from a global
   // These can't be split because the memcpy would still write to the
@@ -279,8 +278,8 @@ bool splitByteArrayAlloca(AllocaInst *Alloca, const DataLayout &DL) {
   std::vector<std::pair<int64_t, int64_t>> DynamicRanges;
   collectSlotAccesses(Alloca, DL, Slots, DynamicRanges);
 
-  errs() << "StackSlotSplitter: Found " << Slots.size() << " constant-offset slots, "
-         << DynamicRanges.size() << " dynamic ranges\n";
+  utils::dbg() << "StackSlotSplitter: Found " << Slots.size() << " constant-offset slots, "
+               << DynamicRanges.size() << " dynamic ranges\n";
 
   if (Slots.empty())
     return false;
@@ -288,13 +287,13 @@ bool splitByteArrayAlloca(AllocaInst *Alloca, const DataLayout &DL) {
   // Remove overlapping slots (including those overlapping with dynamic ranges)
   removeOverlappingSlots(Slots, DynamicRanges);
 
-  errs() << "StackSlotSplitter: After removing overlaps: " << Slots.size() << " slots\n";
+  utils::dbg() << "StackSlotSplitter: After removing overlaps: " << Slots.size() << " slots\n";
 
   if (Slots.empty())
     return false;
 
-  LLVM_DEBUG(dbgs() << "StackSlotSplitter: Found " << Slots.size()
-                    << " non-overlapping slots\n");
+  utils::dbg() << "StackSlotSplitter: Found " << Slots.size()
+               << " non-overlapping slots\n";
 
   // Create individual allocas for each slot
   IRBuilder<> Builder(Alloca->getNextNode());
@@ -307,8 +306,8 @@ bool splitByteArrayAlloca(AllocaInst *Alloca, const DataLayout &DL) {
     NewAlloca->setAlignment(Alloca->getAlign());
     SlotAllocas[Offset] = NewAlloca;
 
-    LLVM_DEBUG(dbgs() << "StackSlotSplitter: Created alloca for offset "
-                      << Offset << ": " << *NewAlloca << "\n");
+    utils::dbg() << "StackSlotSplitter: Created alloca for offset "
+                 << Offset << ": " << *NewAlloca << "\n";
   }
 
   // Replace accesses

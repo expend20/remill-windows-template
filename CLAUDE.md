@@ -12,7 +12,9 @@ If you discover edge case which blocks lifter/optimizer to propagate the constan
 
 ## Debugging
 
-When you need to debug code for understanding how it works, leverage debug output guarded by a setting, so this output may be reused in future.
+Run lifter with `--debug` flag to enable verbose output: `./build/lifter.exe <shellcode.exe> --debug`
+
+When adding new debug output, use `utils::dbg() << ...` which is guarded by the debug flag.
 
 ## Build
 

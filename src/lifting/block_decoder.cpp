@@ -3,7 +3,10 @@
 #include <iostream>
 #include <queue>
 
+#include <llvm/Support/Format.h>
+
 #include "lifting_context.h"
+#include "utils/debug_flag.h"
 
 namespace lifting {
 
@@ -82,10 +85,7 @@ bool BlockDecoder::DecodeBlockAt(uint64_t addr,
 
     if (!ctx_.GetArch()->DecodeInstruction(current_addr, bytes_view,
                                            decoded.instr, decoding_context_)) {
-      if (config_.verbose) {
-        std::cerr << "Failed to decode instruction at 0x" << std::hex
-                  << current_addr << std::dec << "\n";
-      }
+      utils::dbg() << "Failed to decode instruction at " << llvm::format_hex(current_addr, 0) << "\n";
       return false;
     }
 
@@ -211,10 +211,8 @@ void BlockDecoder::DiscoverBlocksFromEntry(
 
       case remill::Instruction::kCategoryIndirectJump:
         // DO NOT follow - will be handled by switch resolution
-        if (config_.verbose) {
-          std::cout << "Found indirect jump at 0x" << std::hex << last_addr
-                    << std::dec << " (will be resolved by SCCP)\n";
-        }
+        utils::dbg() << "Found indirect jump at " << llvm::format_hex(last_addr, 0)
+                     << " (will be resolved by SCCP)\n";
         break;
 
       case remill::Instruction::kCategoryFunctionReturn:

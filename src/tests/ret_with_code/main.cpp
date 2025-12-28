@@ -16,6 +16,7 @@
 #include "lifting/memory_lowering.h"
 #include "lifting/wrapper_builder.h"
 #include "optimization/optimizer.h"
+#include "utils/debug_flag.h"
 #include "utils/module_utils.h"
 #include "utils/pe_reader.h"
 
@@ -24,10 +25,17 @@ int main(int argc, char **argv) {
 
   // Get shellcode path from command line
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <shellcode.exe>\n";
+    std::cerr << "Usage: " << argv[0] << " <shellcode.exe> [--debug]\n";
     return EXIT_FAILURE;
   }
   const char *shellcode_path = argv[1];
+
+  // Parse --debug flag
+  for (int i = 2; i < argc; ++i) {
+    if (std::string(argv[i]) == "--debug") {
+      utils::g_debug = true;
+    }
+  }
 
   // Read full PE file (all sections)
   auto pe_info = utils::ReadPE(shellcode_path);
@@ -68,10 +76,9 @@ int main(int argc, char **argv) {
   // Set PE info for resolving indirect jumps through global variables
   lifter.SetPEInfo(&(*pe_info));
 
-  // Configure iterative lifting with debug output
+  // Configure iterative lifting
   lifting::IterativeLiftingConfig lift_config;
   lift_config.max_iterations = 15;
-  lift_config.verbose = true;
 
   // Derive output directory from input path for iteration dumps
   std::string input_path = shellcode_path;
