@@ -139,6 +139,58 @@ void RemoveMemoryIntrinsics(llvm::Module *module) {
   }
 }
 
+void OptimizeForResolution(llvm::Module *module, llvm::Function *target_func) {
+  // Minimal optimization for switch resolution during iterative lifting
+  // Goal: propagate constants through the CFG to resolve switch selectors
+  llvm::LoopAnalysisManager lam;
+  llvm::FunctionAnalysisManager fam;
+  llvm::CGSCCAnalysisManager cgam;
+  llvm::ModuleAnalysisManager mam;
+
+  llvm::PassBuilder pb;
+  pb.registerModuleAnalyses(mam);
+  pb.registerCGSCCAnalyses(cgam);
+  pb.registerFunctionAnalyses(fam);
+  pb.registerLoopAnalyses(lam);
+  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  // Module-level: inline helper functions
+  llvm::ModulePassManager mpm;
+  mpm.addPass(llvm::ModuleInlinerPass(llvm::getInlineParams(500)));
+  mpm.run(*module, mam);
+
+  // First, run function-level optimization on the target function
+  llvm::FunctionPassManager fpm;
+
+  // SROA: Break up State alloca into scalars
+  fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+
+  // Promote allocas to SSA
+  fpm.addPass(llvm::PromotePass());
+
+  // GVN: Forward stores to loads through memory aliasing
+  // Critical for resolving PC loads where store is through different GEP
+  fpm.addPass(llvm::GVNPass());
+
+  // Fold constant expressions
+  fpm.addPass(llvm::InstCombinePass());
+
+  fpm.run(*target_func, fam);
+
+  // Now run IPSCCP (interprocedural SCCP) to propagate constants across function calls
+  // This is needed because the lifted function is called with a constant entry point
+  // from the test() wrapper function
+  llvm::ModulePassManager mpm2;
+  mpm2.addPass(llvm::IPSCCPPass());
+  mpm2.run(*module, mam);
+
+  // Run another round of function-level optimization after IPSCCP
+  llvm::FunctionPassManager fpm2;
+  fpm2.addPass(llvm::GVNPass());
+  fpm2.addPass(llvm::InstCombinePass());
+  fpm2.run(*target_func, fam);
+}
+
 void RemoveFlagComputationIntrinsics(llvm::Module *module) {
   // Flag computation intrinsics that return their first argument
   // These are used for debugging but block optimization

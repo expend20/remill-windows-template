@@ -22,4 +22,9 @@ void RemoveMemoryIntrinsics(llvm::Module *module);
 // These intrinsics are identity functions used for debugging but block optimization
 void RemoveFlagComputationIntrinsics(llvm::Module *module);
 
+// Minimal optimization for switch resolution during iterative lifting
+// Runs inlining, SROA, mem2reg, and SCCP to propagate constants
+// Safe to run on modules with unsized types (like remill semantics module)
+void OptimizeForResolution(llvm::Module *module, llvm::Function *target_func);
+
 }  // namespace optimization

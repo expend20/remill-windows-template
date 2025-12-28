@@ -64,6 +64,22 @@ int main(int argc, char **argv) {
 
   // Use control flow-aware lifter to handle jumps and loops
   lifting::ControlFlowLifter lifter(ctx);
+
+  // Configure iterative lifting with debug output
+  lifting::IterativeLiftingConfig lift_config;
+  lift_config.max_iterations = 10;
+  lift_config.verbose = false;
+
+  // Derive output directory from input path for iteration dumps
+  std::string input_path = shellcode_path;
+  size_t last_sep = input_path.find_last_of("/\\");
+  if (last_sep != std::string::npos) {
+    lift_config.dump_iterations_dir = input_path.substr(0, last_sep);
+  } else {
+    lift_config.dump_iterations_dir = ".";
+  }
+  lifter.SetIterativeConfig(lift_config);
+
   if (!lifter.LiftFunction(code_base, entry_point, text_section->bytes.data(),
                            text_section->bytes.size(), lifted_func)) {
     std::cerr << "Failed to lift instructions\n";

@@ -18,7 +18,14 @@
       "Bash(cmd /c:*)",
       "Bash(echo:*)",
       "Bash(wc:*)",
-      "Bash(ml64:*)"
+      "Bash(ml64:*)",
+      "Bash(find:*)",
+      "Bash(E:/temp/remill-windows-template/build/lifter.exe:*)",
+      "Bash(del /f buildtestsindirect_jmplifted.ll)",
+      "mcp__discourse__discourse_list_categories",
+      "mcp__discourse__discourse_create_topic",
+      "Bash(./build/tests/indirect_jmp/indirect_jmp_lifter.exe)",
+      "Bash(./indirect_jmp_lifter.exe)"
     ]
   }
 }
