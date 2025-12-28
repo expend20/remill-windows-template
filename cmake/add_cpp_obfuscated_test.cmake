@@ -15,10 +15,11 @@
 # 5. Lifts executable back to LLVM IR (using shared lifter)
 # 6. Verifies the lifted code produces the expected result
 #
+# Tests are grouped under build/tests/obfuscated/<test_name>/
 function(add_cpp_obfuscated_test)
     cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;PASSES;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
 
-    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
+    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/obfuscated/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
 
     set(INPUT_LL ${BUILD_DIR}/input.ll)

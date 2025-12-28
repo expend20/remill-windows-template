@@ -6,10 +6,11 @@
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
 # Note: Uses the shared 'lifter' target defined in CMakeLists.txt
+# Tests are grouped under build/tests/cpp/<test_name>/
 function(add_cpp_lifting_test)
     cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
 
-    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
+    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/cpp/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
 
     set(INPUT_LL ${BUILD_DIR}/input.ll)

@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
 
   // Configure iterative lifting with debug output
   lifting::IterativeLiftingConfig lift_config;
-  lift_config.max_iterations = 10;
+  lift_config.max_iterations = 15;
   lift_config.verbose = true;
 
   // Derive output directory from input path for iteration dumps

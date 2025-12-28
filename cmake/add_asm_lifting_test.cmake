@@ -6,6 +6,7 @@
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
 # Note: Uses the shared 'lifter' target defined in CMakeLists.txt
+# Tests are grouped by ASM filename: build/tests/<asm_basename>/<test_name>/
 function(add_asm_lifting_test)
     cmake_parse_arguments(ARG "" "NAME;ASM;ENTRY;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
 
@@ -14,7 +15,10 @@ function(add_asm_lifting_test)
         set(ARG_ENTRY "main")
     endif()
 
-    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ARG_NAME})
+    # Derive group name from ASM filename (without extension)
+    get_filename_component(ASM_BASENAME ${ARG_ASM} NAME_WE)
+
+    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ASM_BASENAME}/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
 
     set(OBJ_FILE ${BUILD_DIR}/shellcode.obj)

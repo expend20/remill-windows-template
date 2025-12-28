@@ -69,81 +69,240 @@ else()
     add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp)
     target_link_libraries(lifter PRIVATE lifting_common)
 
+    # Basic return value tests (basic_return.asm)
     add_asm_lifting_test(
-        NAME mov_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/mov_const.asm
+        NAME basic_mov_const
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/basic_return.asm
+        ENTRY mov_const
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME or_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/or_const.asm
+        NAME basic_alu_const
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/basic_return.asm
+        ENTRY alu_const
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    # Global memory access tests (global_memory.asm)
+    add_asm_lifting_test(
+        NAME global_bytewise_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY bytewise_write
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME global_var_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_write.asm
+        NAME global_unaligned_read
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY unaligned_read
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME unaligned_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_read.asm
+        NAME global_wordwise_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY wordwise_write
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME stack_var_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_var_write.asm
+        NAME global_qword_access
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY qword_access
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME unaligned_stack_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/unaligned_stack_read.asm
+        NAME global_dword_to_bytes
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY dword_to_bytes
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
+    add_asm_lifting_test(
+        NAME global_zero_extend_byte
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY zero_extend_byte
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_zero_extend_word
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY zero_extend_word
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_sign_extend_byte
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY sign_extend_byte
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_read_modify_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY read_modify_write
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_read_initialized
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY read_initialized
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_array_const_index
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY array_const_index
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_array_reg_index
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY array_reg_index
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_unaligned_qword
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY unaligned_qword
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_multi_global
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY multi_global
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME global_overlapping_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ENTRY overlapping_write
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    # Stack memory access tests (stack_memory.asm)
+    add_asm_lifting_test(
+        NAME stack_bytewise_write
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_memory.asm
+        ENTRY bytewise_write
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME stack_unaligned_read
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_memory.asm
+        ENTRY unaligned_read
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    # Loop handling tests (loops.asm)
     add_asm_lifting_test(
         NAME loop_sum
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/loop_sum.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/loops.asm
+        ENTRY sum_loop
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    # Direct branch tests (direct_branch.asm)
+    add_asm_lifting_test(
+        NAME call_direct
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ENTRY call_helper
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME call_func
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/call_func.asm
+        NAME jmp_direct
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ENTRY direct_jmp
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME indirect_jmp
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_jmp.asm
+        NAME jmp_chain
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ENTRY jmp_chain
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME indirect_jmp_push_ret
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_jmp.asm
+        NAME call_chain
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ENTRY call_chain
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    # Indirect branch tests (indirect_branch.asm)
+    add_asm_lifting_test(
+        NAME indirect_register_jmp
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY register_jmp
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_push_ret
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
         ENTRY push_ret
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
-        NAME indirect_jmp_table
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_jmp.asm
-        ENTRY jump_table_test
+        NAME indirect_jump_table
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY jump_table
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_jump_table_index
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY jump_table_index
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_jmp_chain
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY indirect_jmp_chain
         RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
         EXPECTED_EXIT_CODE 4919
     )
