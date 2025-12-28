@@ -107,3 +107,7 @@ Create a new test similar to global_var.cpp. Take the source from src\deps\llvm-
 Have a look at POINTER_ANALYSIS.md and xtea_noinline.cpp test. Research what prevents constats from propagating and study the possibility of applying inline attributes to the lifted functions, will it make the test work?
 
 Have a look at POINTER_ANALYSIS.md and xtea_noinline.cpp test. Research what prevents constats from propagating and study the possibility of applying LLVM's Alias Analysis, can it make the test work when lifted functions are not inlined?
+
+---
+
+There's an optimization folding issue with xtea_substitution test, final test_optimized.ll should contain only ret i32 4919, but there's something which prevents optimization/folding. At the same time not obfuscated variants xtea_roundtrip and xtea_noinline work well and obfuscated global_var_pluto too. Please investigate.

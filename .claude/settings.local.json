@@ -26,7 +26,10 @@
       "mcp__discourse__discourse_create_topic",
       "Bash(./build/tests/indirect_jmp/indirect_jmp_lifter.exe)",
       "Bash(./indirect_jmp_lifter.exe)",
-      "Bash(./build/lifter.exe:*)"
+      "Bash(./build/lifter.exe:*)",
+      "Bash(./dependencies/install/bin/opt.exe:*)",
+      "Bash(./dependencies/install/bin/llvm-objdump.exe:*)",
+      "Bash(rm:*)"
     ]
   }
 }

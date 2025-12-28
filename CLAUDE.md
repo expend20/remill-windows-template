@@ -1,4 +1,20 @@
-# Build
+# Project
+
+This project is a binari deobfuscator leveraging remill (@src/deps/remill) for binary lifting to llvm and massaging code after it to extract original program logic.
+
+There are obfuscation passes (@src/deps/llvm-ob-passes) which are used for obfuscating code to produce a binary which is then lifted in tests.
+
+## Testing
+
+If you discover edge case which blocks lifter/optimizer to propagate the constant values - create an isolated .asm test for it. When building a new test, make sure that final .ll file (test_optimized.ll) containst only one instruction "ret i32 4919", everything else should be propaged/folded.
+
+## Debugging
+
+When you need to debug code for understanding how it works, leverage debug output guarded by a setting.
+
+## Build
+
+Assume `vcvarsall.bat x64` was already run in the environment before launching Claude (provides ml64, link, mt.exe in PATH).
 
 Always use clang-cl as a compiler! Remill uses GCC/Clang-specific attributes like __attribute__((packed)) which MSVC doesn't support.
 
@@ -8,13 +24,7 @@ Then build main project: cmake -B build -G Ninja -DCMAKE_PREFIX_PATH=$(PWD)/depe
 
 Run the tests with: ctest --test-dir build -V
 
-# Environment Notes
-
-- Run `vcvarsall.bat x64` before launching Claude (provides ml64, link, mt.exe in PATH)
-- Use RelWithDebInfo build type (remill is built with `_ITERATOR_DEBUG_LEVEL=0`)
-- Use clang-cl from dependencies/install/bin to avoid picking up system clang
-
-# References
+## References
 
 Warning! Never references the code frome @NOT_INTEGRATED directory, only use it peer inside to understand how it works.
 

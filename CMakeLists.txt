@@ -224,6 +224,15 @@ else()
         EXPECTED_EXIT_CODE 4919
     )
 
+    # Cross-section memory tests (rdata_to_stack.asm)
+    add_asm_lifting_test(
+        NAME rdata_to_stack
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/rdata_to_stack.asm
+        ENTRY rdata_to_stack
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
     # Loop handling tests (loops.asm)
     add_asm_lifting_test(
         NAME loop_sum
@@ -372,6 +381,16 @@ else()
                 RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
                 EXPECTED_EXIT_CODE 4919
             )
+
+            add_cpp_obfuscated_test(
+                NAME xtea_substitution
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_substitution.cpp
+                ENTRY test_me
+                PASSES "pluto-substitution"
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+
         else()
             message(STATUS "opt not found, obfuscation tests will not be available")
         endif()

@@ -2,9 +2,12 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
+#include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/MDBuilder.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/Error.h>
 #include <llvm/Transforms/IPO/GlobalDCE.h>
 #include <llvm/Transforms/IPO/GlobalOpt.h>
 #include <llvm/Transforms/IPO/ModuleInliner.h>
@@ -14,6 +17,7 @@
 #include <llvm/Transforms/Scalar/EarlyCSE.h>
 #include <llvm/Transforms/Scalar/DeadStoreElimination.h>
 #include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Scalar/LoopUnrollPass.h>
 #include <llvm/Transforms/Scalar/MemCpyOptimizer.h>
 #include <llvm/Transforms/Scalar/SROA.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
@@ -22,6 +26,62 @@
 #include <llvm/Transforms/Utils/Mem2Reg.h>
 
 namespace optimization {
+
+namespace {
+
+// Pass to mark all loops with llvm.loop.unroll.full metadata.
+// This forces the loop unroller to fully unroll regardless of cost.
+class ForceFullUnrollPass : public llvm::PassInfoMixin<ForceFullUnrollPass> {
+public:
+  llvm::PreservedAnalyses run(llvm::Function &F,
+                               llvm::FunctionAnalysisManager &AM) {
+    auto &LI = AM.getResult<llvm::LoopAnalysis>(F);
+    if (LI.empty())
+      return llvm::PreservedAnalyses::all();
+
+    llvm::MDBuilder MDB(F.getContext());
+    bool changed = false;
+
+    for (llvm::Loop *L : LI) {
+      markLoopForFullUnroll(L, MDB, changed);
+    }
+
+    return changed ? llvm::PreservedAnalyses::none()
+                   : llvm::PreservedAnalyses::all();
+  }
+
+private:
+  void markLoopForFullUnroll(llvm::Loop *L, llvm::MDBuilder &MDB,
+                              bool &changed) {
+    // Process nested loops first
+    for (llvm::Loop *SubLoop : *L) {
+      markLoopForFullUnroll(SubLoop, MDB, changed);
+    }
+
+    // Get the loop latch's terminator to attach metadata
+    if (llvm::BasicBlock *Latch = L->getLoopLatch()) {
+      if (llvm::Instruction *Term = Latch->getTerminator()) {
+        // Create llvm.loop.unroll.full metadata
+        llvm::LLVMContext &Ctx = Term->getContext();
+        llvm::MDNode *FullUnroll = llvm::MDNode::get(
+            Ctx, llvm::MDString::get(Ctx, "llvm.loop.unroll.full"));
+
+        // Create loop ID with the unroll metadata
+        llvm::SmallVector<llvm::Metadata *, 4> MDs;
+        MDs.push_back(nullptr);  // Placeholder for self-reference
+        MDs.push_back(FullUnroll);
+
+        llvm::MDNode *LoopID = llvm::MDNode::get(Ctx, MDs);
+        LoopID->replaceOperandWith(0, LoopID);  // Self-reference
+
+        Term->setMetadata(llvm::LLVMContext::MD_loop, LoopID);
+        changed = true;
+      }
+    }
+  }
+};
+
+}  // namespace
 
 void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
   // Initial optimization pass - inline and simplify
@@ -101,8 +161,10 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
 }
 
 void OptimizeAggressive(llvm::Module *module) {
-  // Run full O3 pipeline - includes loop unrolling and constant folding
-  // Only safe to run on clean modules (extracted functions without unsized types)
+  // Run aggressive optimization pipeline for deobfuscation.
+  // Uses llvm.loop.unroll.full metadata to force full loop unrolling
+  // regardless of cost threshold.
+
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -115,9 +177,39 @@ void OptimizeAggressive(llvm::Module *module) {
   pb.registerLoopAnalyses(lam);
   pb.crossRegisterProxies(lam, fam, cgam, mam);
 
+  // Run O3 first for general optimization
   llvm::ModulePassManager mpm = pb.buildPerModuleDefaultPipeline(
       llvm::OptimizationLevel::O3);
   mpm.run(*module, mam);
+
+  // Mark all loops with llvm.loop.unroll.full metadata and run unroller.
+  // This bypasses the cost threshold and forces full unrolling.
+  // Run multiple rounds to handle nested loops and propagate constants.
+  llvm::LoopUnrollOptions unroll_opts;
+  unroll_opts.setOptLevel(3);
+  unroll_opts.setFullUnrollMaxCount(256);
+
+  for (int round = 0; round < 3; ++round) {
+    llvm::FunctionPassManager fpm;
+
+    // Mark loops for forced full unrolling
+    fpm.addPass(ForceFullUnrollPass());
+
+    // Run loop unroller (will respect the metadata)
+    fpm.addPass(llvm::LoopUnrollPass(unroll_opts));
+
+    // Simplification passes to fold constants after unrolling
+    fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+    fpm.addPass(llvm::GVNPass());
+    fpm.addPass(llvm::SCCPPass());
+    fpm.addPass(llvm::InstCombinePass());
+    fpm.addPass(llvm::SimplifyCFGPass());
+    fpm.addPass(llvm::ADCEPass());
+
+    llvm::ModulePassManager round_mpm;
+    round_mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+    round_mpm.run(*module, mam);
+  }
 }
 
 void RemoveMemoryIntrinsics(llvm::Module *module) {
@@ -199,6 +291,16 @@ void RemoveFlagComputationIntrinsics(llvm::Module *module) {
       "__remill_flag_computation_sign",
       "__remill_flag_computation_carry",
       "__remill_flag_computation_overflow",
+      // Comparison intrinsics - all return their argument unchanged
+      "__remill_compare_sle",
+      "__remill_compare_slt",
+      "__remill_compare_sge",
+      "__remill_compare_sgt",
+      "__remill_compare_ule",
+      "__remill_compare_ult",
+      "__remill_compare_ugt",
+      "__remill_compare_uge",
+      "__remill_compare_eq",
       "__remill_compare_neq",
   };
 
