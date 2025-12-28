@@ -1,6 +1,8 @@
 # Project
 
-This project is a binari deobfuscator leveraging remill (@src/deps/remill) for binary lifting to llvm and massaging code after it to extract original program logic.
+This project is a binary deobfuscator leveraging remill (@src/deps/remill) for binary lifting to llvm and massaging code after it to extract original program logic.
+
+Core idea of the deobfuscator is extremely simple: make everything constant and apply LLVM optimisation to propagate constants and fold the code as much as possible.
 
 There are obfuscation passes (@src/deps/llvm-ob-passes) which are used for obfuscating code to produce a binary which is then lifted in tests.
 
@@ -10,7 +12,7 @@ If you discover edge case which blocks lifter/optimizer to propagate the constan
 
 ## Debugging
 
-When you need to debug code for understanding how it works, leverage debug output guarded by a setting.
+When you need to debug code for understanding how it works, leverage debug output guarded by a setting, so this output may be reused in future.
 
 ## Build
 

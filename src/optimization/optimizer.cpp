@@ -1,4 +1,5 @@
 #include "optimizer.h"
+#include "stack_slot_splitter.h"
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -177,7 +178,25 @@ void OptimizeAggressive(llvm::Module *module) {
   pb.registerLoopAnalyses(lam);
   pb.crossRegisterProxies(lam, fam, cgam, mam);
 
-  // Run O3 first for general optimization
+  // Split stack slots to enable SSA promotion for control flow flattening
+  // The byte array [N x i8] used for stack simulation blocks SROA/Mem2Reg.
+  // By splitting it into individual typed allocas, we enable SSA promotion
+  // which then allows SCCP to propagate constants through the state machine.
+  {
+    llvm::FunctionPassManager fpm;
+    fpm.addPass(StackSlotSplitter());  // Split byte array -> typed allocas
+    fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+    fpm.addPass(llvm::PromotePass());  // Promote to SSA (Mem2Reg)
+    fpm.addPass(llvm::SCCPPass());     // Propagate constants
+    fpm.addPass(llvm::SimplifyCFGPass());
+    fpm.addPass(llvm::ADCEPass());
+
+    llvm::ModulePassManager mpm;
+    mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+    mpm.run(*module, mam);
+  }
+
+  // Run O3 for general optimization
   llvm::ModulePassManager mpm = pb.buildPerModuleDefaultPipeline(
       llvm::OptimizationLevel::O3);
   mpm.run(*module, mam);
