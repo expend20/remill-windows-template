@@ -17,6 +17,10 @@ add_library(lifting_common STATIC
     src/lifting/lifting_context.cpp
     src/lifting/instruction_lifter.cpp
     src/lifting/control_flow_lifter.cpp
+    src/lifting/block_decoder.cpp
+    src/lifting/block_terminator.cpp
+    src/lifting/function_splitter.cpp
+    src/lifting/indirect_jump_resolver.cpp
     src/lifting/wrapper_builder.cpp
     src/lifting/memory_lowering.cpp
     src/optimization/optimizer.cpp
