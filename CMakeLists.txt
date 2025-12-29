@@ -466,6 +466,15 @@ else()
                 EXPECTED_EXIT_CODE 4919
             )
 
+            add_cpp_obfuscated_test(
+                NAME xtea_mba
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_mba.cpp
+                ENTRY test_me
+                PASSES "pluto-mba-obfuscation"
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+
         else()
             message(STATUS "opt not found, obfuscation tests will not be available")
         endif()

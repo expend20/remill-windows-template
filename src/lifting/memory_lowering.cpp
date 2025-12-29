@@ -228,6 +228,25 @@ static bool IsValidSectionAddress(uint64_t va, const MemoryBackingInfo &mem_info
   return false;
 }
 
+// Create a load with proper type handling (including float types)
+static llvm::Value* CreateTypedLoad(llvm::IRBuilder<> &ir, llvm::Value *ptr,
+                                     llvm::Type *result_type, const char *name) {
+  // For float types, we need to load through a properly typed pointer
+  if (result_type->isFloatTy() || result_type->isDoubleTy() ||
+      result_type->isX86_FP80Ty()) {
+    // Create a load of the float type directly - LLVM's opaque pointers handle this
+    return ir.CreateLoad(result_type, ptr, name);
+  }
+  return ir.CreateLoad(result_type, ptr, name);
+}
+
+// Create a store with proper type handling (including float types)
+static void CreateTypedStore(llvm::IRBuilder<> &ir, llvm::Value *value,
+                              llvm::Value *ptr) {
+  // For float types, store directly - LLVM's opaque pointers handle this
+  ir.CreateStore(value, ptr);
+}
+
 std::pair<llvm::GlobalVariable *, uint64_t>
 MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
   for (const auto &mapping : sections) {
@@ -352,6 +371,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
   // Build a set of memory intrinsic functions to recognize
   std::set<llvm::Function *> read_intrinsics;
   std::set<llvm::Function *> write_intrinsics;
+  std::set<llvm::Function *> read_float_intrinsics;
+  std::set<llvm::Function *> write_float_intrinsics;
   llvm::Function *read_64 = nullptr;
   llvm::Function *write_64 = nullptr;
 
@@ -361,6 +382,12 @@ void LowerMemoryIntrinsics(llvm::Module *module,
   const char *write_names[] = {
       "__remill_write_memory_8", "__remill_write_memory_16",
       "__remill_write_memory_32", "__remill_write_memory_64"};
+  const char *read_float_names[] = {
+      "__remill_read_memory_f32", "__remill_read_memory_f64",
+      "__remill_read_memory_f80"};
+  const char *write_float_names[] = {
+      "__remill_write_memory_f32", "__remill_write_memory_f64",
+      "__remill_write_memory_f80"};
 
   for (const char *name : read_names) {
     if (auto *f = module->getFunction(name)) {
@@ -376,6 +403,16 @@ void LowerMemoryIntrinsics(llvm::Module *module,
       if (std::string(name) == "__remill_write_memory_64") {
         write_64 = f;
       }
+    }
+  }
+  for (const char *name : read_float_names) {
+    if (auto *f = module->getFunction(name)) {
+      read_float_intrinsics.insert(f);
+    }
+  }
+  for (const char *name : write_float_names) {
+    if (auto *f = module->getFunction(name)) {
+      write_float_intrinsics.insert(f);
     }
   }
 
@@ -397,7 +434,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
       for (auto &inst : bb) {
         if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
           auto *callee = call->getCalledFunction();
-          if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+          if (read_intrinsics.count(callee) || write_intrinsics.count(callee) ||
+              read_float_intrinsics.count(callee) || write_float_intrinsics.count(callee)) {
             to_process.push_back(call);
           }
         }
@@ -414,10 +452,12 @@ void LowerMemoryIntrinsics(llvm::Module *module,
     for (auto *call : to_process) {
     auto *callee = call->getCalledFunction();
     bool is_read = read_intrinsics.count(callee) > 0;
+    bool is_float_read = read_float_intrinsics.count(callee) > 0;
+    bool is_float_write = write_float_intrinsics.count(callee) > 0;
     bool is_64bit_read = (callee == read_64);
     bool is_64bit_write = (callee == write_64);
 
-    if (is_read) {
+    if (is_read || is_float_read) {
       // Read intrinsic: __remill_read_memory_N(mem, addr) -> value
       if (call->arg_size() < 2) {
         continue;
@@ -697,14 +737,15 @@ void LowerMemoryIntrinsics(llvm::Module *module,
     for (auto &inst : bb) {
       if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto *callee = call->getCalledFunction();
-        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+        if (read_intrinsics.count(callee) || write_intrinsics.count(callee) ||
+            read_float_intrinsics.count(callee) || write_float_intrinsics.count(callee)) {
           remaining++;
           std::cerr << "WARNING: Could not lower memory intrinsic: ";
           call->print(llvm::errs());
           std::cerr << "\n";
 
           // Replace with undef/noop so code can still run
-          if (read_intrinsics.count(callee)) {
+          if (read_intrinsics.count(callee) || read_float_intrinsics.count(callee)) {
             call->replaceAllUsesWith(llvm::UndefValue::get(call->getType()));
           } else {
             call->replaceAllUsesWith(call->getArgOperand(0));
@@ -720,7 +761,8 @@ void LowerMemoryIntrinsics(llvm::Module *module,
     for (auto &inst : bb) {
       if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto *callee = call->getCalledFunction();
-        if (read_intrinsics.count(callee) || write_intrinsics.count(callee)) {
+        if (read_intrinsics.count(callee) || write_intrinsics.count(callee) ||
+            read_float_intrinsics.count(callee) || write_float_intrinsics.count(callee)) {
           to_erase.push_back(call);
         }
       }
