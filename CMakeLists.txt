@@ -71,6 +71,11 @@ else()
     add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp)
     target_link_libraries(lifter PRIVATE lifting_common)
 
+    # IR checker tool for verifying optimized IR
+    add_executable(ir_checker ${CMAKE_SOURCE_DIR}/src/tools/ir_checker.cpp)
+    target_include_directories(ir_checker PRIVATE ${CMAKE_PREFIX_PATH}/include)
+    target_link_libraries(ir_checker PRIVATE LLVM-Wrapper)
+
     # Basic return value tests (basic_return.asm)
     add_asm_lifting_test(
         NAME basic_mov_const
@@ -398,6 +403,15 @@ else()
                 CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_flattening.cpp
                 ENTRY test_me
                 PASSES "pluto-flattening"
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+
+            add_cpp_obfuscated_test(
+                NAME xtea_bogus_cfg
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_bogus_cfg.cpp
+                ENTRY test_me
+                PASSES "pluto-bogus-control-flow"
                 RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
                 EXPECTED_EXIT_CODE 4919
             )

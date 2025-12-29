@@ -29,7 +29,8 @@
       "Bash(./build/lifter.exe:*)",
       "Bash(./dependencies/install/bin/opt.exe:*)",
       "Bash(./dependencies/install/bin/llvm-objdump.exe:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(./build/ir_checker.exe:*)"
     ]
   }
 }

@@ -74,12 +74,18 @@ function(add_asm_lifting_test)
     add_dependencies(${ARG_NAME}_runner ${ARG_NAME}_object)
     target_link_libraries(${ARG_NAME}_runner PRIVATE ${OPTIMIZED_O})
 
-    # Test
+    # Test: verify exit code
     add_test(
         NAME ${ARG_NAME}_test
         COMMAND ${CMAKE_COMMAND}
             -DTEST_EXECUTABLE=$<TARGET_FILE:${ARG_NAME}_runner>
             -DEXPECTED_EXIT_CODE=${ARG_EXPECTED_EXIT_CODE}
             -P ${CMAKE_SOURCE_DIR}/cmake/check_exit_code.cmake
+    )
+
+    # Test: verify optimized IR contains only "ret i32 <expected>"
+    add_test(
+        NAME ${ARG_NAME}_ir_check
+        COMMAND ir_checker ${BUILD_DIR}/test_optimized.bc ${ARG_EXPECTED_EXIT_CODE}
     )
 endfunction()
