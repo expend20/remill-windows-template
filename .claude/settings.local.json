@@ -30,7 +30,8 @@
       "Bash(./dependencies/install/bin/opt.exe:*)",
       "Bash(./dependencies/install/bin/llvm-objdump.exe:*)",
       "Bash(rm:*)",
-      "Bash(./build/ir_checker.exe:*)"
+      "Bash(./build/ir_checker.exe:*)",
+      "Bash(../../../../../../dependencies/install/bin/opt.exe:*)"
     ]
   }
 }

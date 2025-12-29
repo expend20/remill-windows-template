@@ -25,6 +25,9 @@
 #include <llvm/Transforms/Scalar/SCCP.h>
 #include <llvm/Transforms/IPO/SCCP.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
+#include <llvm/Transforms/Utils/LowerSwitch.h>
+#include <llvm/Transforms/Utils/LoopSimplify.h>
+#include <llvm/Transforms/Utils/LCSSA.h>
 
 namespace optimization {
 
@@ -161,11 +164,8 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func) {
   fpm.run(*target_func, fam);
 }
 
-void OptimizeAggressive(llvm::Module *module) {
-  // Run aggressive optimization pipeline for deobfuscation.
-  // Uses llvm.loop.unroll.full metadata to force full loop unrolling
-  // regardless of cost threshold.
-
+// Helper to run O3 pipeline with fresh analysis managers
+static void runO3Pipeline(llvm::Module *module) {
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -178,57 +178,77 @@ void OptimizeAggressive(llvm::Module *module) {
   pb.registerLoopAnalyses(lam);
   pb.crossRegisterProxies(lam, fam, cgam, mam);
 
-  // Split stack slots to enable SSA promotion for control flow flattening
-  // The byte array [N x i8] used for stack simulation blocks SROA/Mem2Reg.
-  // By splitting it into individual typed allocas, we enable SSA promotion
-  // which then allows SCCP to propagate constants through the state machine.
+  llvm::ModulePassManager mpm = pb.buildPerModuleDefaultPipeline(
+      llvm::OptimizationLevel::O3);
+  mpm.run(*module, mam);
+}
+
+void OptimizeAggressive(llvm::Module *module) {
+  // Aggressive optimization pipeline for deobfuscation.
+  // Structure: SSA promotion -> 2x O3 -> force unroll -> O3 -> cleanup
+  // The 2x O3 before unrolling is needed to propagate constants from .rdata
+  // through complex control flow before the loop can be analyzed for unrolling.
+
+  // NOTE: doesn't seem to be necessary, leaving commented out
+  // Phase 1: Split stack slots and promote to SSA
+  //{
+  //  llvm::LoopAnalysisManager lam;
+  //  llvm::FunctionAnalysisManager fam;
+  //  llvm::CGSCCAnalysisManager cgam;
+  //  llvm::ModuleAnalysisManager mam;
+
+  //  llvm::PassBuilder pb;
+  //  pb.registerModuleAnalyses(mam);
+  //  pb.registerCGSCCAnalyses(cgam);
+  //  pb.registerFunctionAnalyses(fam);
+  //  pb.registerLoopAnalyses(lam);
+  //  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  //  llvm::FunctionPassManager fpm;
+  //  //fpm.addPass(StackSlotSplitter());  // Split byte array -> typed allocas
+  //  //fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
+  //  //fpm.addPass(llvm::PromotePass());  // Promote to SSA (Mem2Reg)
+  //  //fpm.addPass(llvm::SCCPPass());
+  //  //fpm.addPass(llvm::SimplifyCFGPass());
+  //  //fpm.addPass(llvm::ADCEPass());
+
+  //  llvm::ModulePassManager mpm;
+  //  mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+  //  mpm.run(*module, mam);
+  //}
+
+  // Phase 2: First O3 - propagates constants from .rdata into computations
+  runO3Pipeline(module);
+
+  // Phase 3: Second O3 - cascades constant propagation further.
+  // Required for loop trip count analysis in complex flattened control flow.
+  runO3Pipeline(module);
+
+  // Phase 4: Force full unroll on all loops
   {
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+
+    llvm::PassBuilder pb;
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+
     llvm::FunctionPassManager fpm;
-    fpm.addPass(StackSlotSplitter());  // Split byte array -> typed allocas
-    fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
-    fpm.addPass(llvm::PromotePass());  // Promote to SSA (Mem2Reg)
-    fpm.addPass(llvm::SCCPPass());     // Propagate constants
-    fpm.addPass(llvm::SimplifyCFGPass());
-    fpm.addPass(llvm::ADCEPass());
+    fpm.addPass(ForceFullUnrollPass());
 
     llvm::ModulePassManager mpm;
     mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
     mpm.run(*module, mam);
   }
 
-  // Run O3 for general optimization
-  llvm::ModulePassManager mpm = pb.buildPerModuleDefaultPipeline(
-      llvm::OptimizationLevel::O3);
-  mpm.run(*module, mam);
+  // Phase 5: Third O3 - unrolls with forced metadata and constant folds
+  runO3Pipeline(module);
 
-  // Mark all loops with llvm.loop.unroll.full metadata and run unroller.
-  // This bypasses the cost threshold and forces full unrolling.
-  // Run multiple rounds to handle nested loops and propagate constants.
-  llvm::LoopUnrollOptions unroll_opts;
-  unroll_opts.setOptLevel(3);
-  unroll_opts.setFullUnrollMaxCount(256);
-
-  for (int round = 0; round < 3; ++round) {
-    llvm::FunctionPassManager fpm;
-
-    // Mark loops for forced full unrolling
-    fpm.addPass(ForceFullUnrollPass());
-
-    // Run loop unroller (will respect the metadata)
-    fpm.addPass(llvm::LoopUnrollPass(unroll_opts));
-
-    // Simplification passes to fold constants after unrolling
-    fpm.addPass(llvm::SROAPass(llvm::SROAOptions::ModifyCFG));
-    fpm.addPass(llvm::GVNPass());
-    fpm.addPass(llvm::SCCPPass());
-    fpm.addPass(llvm::InstCombinePass());
-    fpm.addPass(llvm::SimplifyCFGPass());
-    fpm.addPass(llvm::ADCEPass());
-
-    llvm::ModulePassManager round_mpm;
-    round_mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
-    round_mpm.run(*module, mam);
-  }
 }
 
 void RemoveMemoryIntrinsics(llvm::Module *module) {
