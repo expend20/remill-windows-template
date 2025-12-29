@@ -475,6 +475,18 @@ else()
                 EXPECTED_EXIT_CODE 4919
             )
 
+            # All Pluto passes combined (except MBA which crashes when combined with others)
+            # Note: module passes (indirect-call, global-encryption) need to be separated
+            # from function passes using module(function(...)) wrapper syntax
+            add_cpp_obfuscated_test(
+                NAME xtea_all_pluto
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_all_pluto.cpp
+                ENTRY test_me
+                PASSES "module(function(pluto-substitution,pluto-flattening,pluto-bogus-control-flow)),pluto-indirect-call,pluto-global-encryption"
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+
         else()
             message(STATUS "opt not found, obfuscation tests will not be available")
         endif()
