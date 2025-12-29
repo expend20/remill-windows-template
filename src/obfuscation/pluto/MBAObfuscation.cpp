@@ -53,11 +53,9 @@ void Pluto::MbaObfuscation::substituteConstant(Instruction *I, int i) {
         coeffs[14] -= val->getValue().getZExtValue();
         Value *mbaExpr = insertLinearMBA(coeffs, I);
         delete[] coeffs;
-        // Polynomial MBA disabled due to DenseMap corruption issues with 32-bit types
-        // when pass is loaded as DLL plugin (ODR violation with LLVM internals)
-        // if (val->getBitWidth() <= 32) {
-        //     mbaExpr = insertPolynomialMBA(mbaExpr, I);
-        // }
+        if (val->getBitWidth() <= 32) {
+            mbaExpr = insertPolynomialMBA(mbaExpr, I);
+        }
         I->setOperand(i, mbaExpr);
     }
 }
@@ -84,11 +82,9 @@ void Pluto::MbaObfuscation::substitute(BinaryOperator *BI) {
         break;
     }
     if (mbaExpr) {
-        // Polynomial MBA disabled due to DenseMap corruption issues with 32-bit types
-        // when pass is loaded as DLL plugin (ODR violation with LLVM internals)
-        // if (BI->getOperand(0)->getType()->getIntegerBitWidth() <= 32) {
-        //     mbaExpr = insertPolynomialMBA(mbaExpr, BI);
-        // }
+        if (BI->getOperand(0)->getType()->getIntegerBitWidth() <= 32) {
+            mbaExpr = insertPolynomialMBA(mbaExpr, BI);
+        }
         BI->replaceAllUsesWith(mbaExpr);
     }
 }
