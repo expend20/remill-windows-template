@@ -15,9 +15,8 @@
 
 namespace lifting {
 
-IndirectJumpResolver::IndirectJumpResolver(const IterativeLiftingConfig &config,
-                                           const utils::PEInfo *pe_info)
-    : config_(config), pe_info_(pe_info) {}
+IndirectJumpResolver::IndirectJumpResolver(const utils::PEInfo *pe_info)
+    : pe_info_(pe_info) {}
 
 std::optional<uint64_t> IndirectJumpResolver::EvaluateBinaryOp(
     llvm::Instruction::BinaryOps opcode, uint64_t lhs, uint64_t rhs) {

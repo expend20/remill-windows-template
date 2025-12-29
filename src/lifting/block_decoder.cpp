@@ -10,10 +10,8 @@
 
 namespace lifting {
 
-BlockDecoder::BlockDecoder(LiftingContext &ctx,
-                           const IterativeLiftingConfig &config)
+BlockDecoder::BlockDecoder(LiftingContext &ctx)
     : ctx_(ctx),
-      config_(config),
       decoding_context_(ctx.GetArch()->CreateInitialContext()) {}
 
 void BlockDecoder::SetCodeRegion(const uint8_t *bytes, size_t size,

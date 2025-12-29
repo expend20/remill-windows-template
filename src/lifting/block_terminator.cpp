@@ -11,9 +11,8 @@
 
 namespace lifting {
 
-BlockTerminator::BlockTerminator(LiftingContext &ctx,
-                                 const IterativeLiftingConfig &config)
-    : ctx_(ctx), config_(config) {}
+BlockTerminator::BlockTerminator(LiftingContext &ctx)
+    : ctx_(ctx) {}
 
 llvm::SwitchInst *BlockTerminator::FinishBlock(
     llvm::BasicBlock *block,

@@ -12,14 +12,13 @@
 namespace lifting {
 
 // Forward declarations
-struct IterativeLiftingConfig;
 struct IterativeLiftingState;
 class LiftingContext;
 
 // Helper class for finishing basic blocks with appropriate terminators
 class BlockTerminator {
  public:
-  BlockTerminator(LiftingContext &ctx, const IterativeLiftingConfig &config);
+  explicit BlockTerminator(LiftingContext &ctx);
 
   // Finish a basic block with appropriate terminator
   // Returns the SwitchInst for indirect jumps (nullptr otherwise)
@@ -36,7 +35,6 @@ class BlockTerminator {
 
  private:
   LiftingContext &ctx_;
-  const IterativeLiftingConfig &config_;
 };
 
 }  // namespace lifting

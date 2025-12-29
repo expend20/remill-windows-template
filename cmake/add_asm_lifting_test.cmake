@@ -61,7 +61,7 @@ function(add_asm_lifting_test)
     # Compile .ll -> .o
     add_custom_command(
         OUTPUT ${OPTIMIZED_O}
-        COMMAND ${CLANG_EXECUTABLE} -c -O2 ${OPTIMIZED_LL} -o ${OPTIMIZED_O}
+        COMMAND ${CLANG_EXECUTABLE} -c -O2 -Wno-override-module ${OPTIMIZED_LL} -o ${OPTIMIZED_O}
         DEPENDS ${OPTIMIZED_LL}
         COMMENT "[${ARG_NAME}] Compiling lifted IR..."
     )

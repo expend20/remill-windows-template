@@ -180,7 +180,7 @@ void ControlFlowLifter::CreateBasicBlocksIncremental() {
 }
 
 bool ControlFlowLifter::LiftPendingBlocks() {
-  BlockTerminator terminator(ctx_, config_);
+  BlockTerminator terminator(ctx_);
 
   for (uint64_t block_addr : block_starts_) {
     if (iter_state_.lifted_blocks.count(block_addr)) {
@@ -202,7 +202,7 @@ bool ControlFlowLifter::LiftPendingBlocks() {
     while (addr < block_end) {
       auto instr_it = instructions_.find(addr);
       if (instr_it == instructions_.end()) {
-        BlockDecoder decoder(ctx_, config_);
+        BlockDecoder decoder(ctx_);
         decoder.SetCodeRegion(code_bytes_, code_size_, code_start_, code_end_);
         if (!decoder.DecodeBlockAt(addr, instructions_, block_starts_)) {
           std::cerr << "Missing instruction at 0x" << std::hex << addr
@@ -246,7 +246,7 @@ bool ControlFlowLifter::LiftPendingBlocks() {
 }
 
 std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
-  IndirectJumpResolver resolver(config_, pe_info_);
+  IndirectJumpResolver resolver(pe_info_);
 
   auto find_block_end = [this](uint64_t addr) { return FindBlockEnd(addr); };
   auto get_block_owner = [this](uint64_t addr) -> uint64_t {
@@ -274,7 +274,7 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
   iter_state_.pending_blocks.insert(entry_point);
   iter_state_.block_discovery_iteration[entry_point] = 0;
 
-  BlockDecoder decoder(ctx_, config_);
+  BlockDecoder decoder(ctx_);
   decoder.SetCodeRegion(code_bytes_, code_size_, code_start_, code_end_);
 
   int iteration = 0;
@@ -414,14 +414,14 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
 // ============================================================================
 
 bool ControlFlowLifter::DecodeBlockAt(uint64_t addr) {
-  BlockDecoder decoder(ctx_, config_);
+  BlockDecoder decoder(ctx_);
   decoder.SetCodeRegion(code_bytes_, code_size_, code_start_, code_end_);
   return decoder.DecodeBlockAt(addr, instructions_, block_starts_);
 }
 
 void ControlFlowLifter::DiscoverBlocksFromEntry(uint64_t start_addr,
                                                  int iteration) {
-  BlockDecoder decoder(ctx_, config_);
+  BlockDecoder decoder(ctx_);
   decoder.SetCodeRegion(code_bytes_, code_size_, code_start_, code_end_);
   decoder.DiscoverBlocksFromEntry(start_addr, iteration, instructions_,
                                   block_starts_, call_targets_,
@@ -442,7 +442,7 @@ void ControlFlowLifter::CreateHelperFunctions(llvm::Function *main_func) {
 bool ControlFlowLifter::DiscoverBasicBlocks(uint64_t start_address,
                                              const uint8_t *bytes,
                                              size_t size) {
-  BlockDecoder decoder(ctx_, config_);
+  BlockDecoder decoder(ctx_);
   decoder.SetCodeRegion(bytes, size, start_address, start_address + size);
   return decoder.DiscoverBasicBlocks(start_address, bytes, size,
                                      instructions_, block_starts_);
@@ -519,7 +519,7 @@ void ControlFlowLifter::CreateBasicBlocks(llvm::Function *func) {
 
 bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
                                     uint64_t code_base) {
-  BlockTerminator terminator(ctx_, config_);
+  BlockTerminator terminator(ctx_);
 
   for (auto it = block_starts_.begin(); it != block_starts_.end(); ++it) {
     uint64_t block_addr = *it;
@@ -578,7 +578,7 @@ llvm::SwitchInst *ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
                                                   const DecodedInstruction &last_instr,
                                                   uint64_t next_addr,
                                                   uint64_t block_addr) {
-  BlockTerminator terminator(ctx_, config_);
+  BlockTerminator terminator(ctx_);
   return terminator.FinishBlock(block, last_instr, next_addr, block_addr,
                                 blocks_, block_owner_, helper_functions_,
                                 iter_state_, dispatch_blocks_);
@@ -592,12 +592,12 @@ std::optional<uint64_t> ControlFlowLifter::EvaluateBinaryOp(
 
 std::optional<uint64_t> ControlFlowLifter::ReadQwordFromPESections(
     uint64_t masked_offset) const {
-  IndirectJumpResolver resolver(config_, pe_info_);
+  IndirectJumpResolver resolver(pe_info_);
   return resolver.ReadQwordFromPESections(masked_offset);
 }
 
 std::optional<int64_t> ControlFlowLifter::EvaluateWithKnownPC(llvm::Value *val) {
-  IndirectJumpResolver resolver(config_, pe_info_);
+  IndirectJumpResolver resolver(pe_info_);
   return resolver.EvaluateWithKnownPC(val, entry_point_);
 }
 

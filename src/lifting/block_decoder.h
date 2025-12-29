@@ -12,14 +12,13 @@
 namespace lifting {
 
 // Forward declarations
-struct IterativeLiftingConfig;
 struct IterativeLiftingState;
 class LiftingContext;
 
 // Helper class for decoding instructions and discovering basic blocks
 class BlockDecoder {
  public:
-  BlockDecoder(LiftingContext &ctx, const IterativeLiftingConfig &config);
+  explicit BlockDecoder(LiftingContext &ctx);
 
   // Set the code region for decoding
   void SetCodeRegion(const uint8_t *bytes, size_t size,
@@ -59,7 +58,6 @@ class BlockDecoder {
 
  private:
   LiftingContext &ctx_;
-  const IterativeLiftingConfig &config_;
   remill::DecodingContext decoding_context_;
 
   const uint8_t *code_bytes_ = nullptr;

@@ -14,14 +14,12 @@
 namespace lifting {
 
 // Forward declarations
-struct IterativeLiftingConfig;
 struct IterativeLiftingState;
 
 // Helper class for resolving indirect jumps via SCCP analysis
 class IndirectJumpResolver {
  public:
-  IndirectJumpResolver(const IterativeLiftingConfig &config,
-                       const utils::PEInfo *pe_info);
+  explicit IndirectJumpResolver(const utils::PEInfo *pe_info);
 
   // Resolve indirect jumps by cloning the module and running SCCP
   // Returns set of newly discovered target addresses
@@ -45,7 +43,6 @@ class IndirectJumpResolver {
   std::optional<uint64_t> ReadQwordFromPESections(uint64_t masked_offset) const;
 
  private:
-  const IterativeLiftingConfig &config_;
   const utils::PEInfo *pe_info_;
 };
 
