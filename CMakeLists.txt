@@ -323,6 +323,38 @@ else()
         EXPECTED_EXIT_CODE 4919
     )
 
+    add_asm_lifting_test(
+        NAME indirect_call_register
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY indirect_call_register
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_call_memory
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY indirect_call_memory
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_call_indexed
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY indirect_call_indexed
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
+    add_asm_lifting_test(
+        NAME indirect_call_indexed_offset
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ENTRY indirect_call_indexed_offset
+        RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+        EXPECTED_EXIT_CODE 4919
+    )
+
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
 
@@ -421,6 +453,15 @@ else()
                 CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_global_encryption.cpp
                 ENTRY test_me
                 PASSES "pluto-global-encryption"
+                RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
+                EXPECTED_EXIT_CODE 4919
+            )
+
+            add_cpp_obfuscated_test(
+                NAME xtea_indirect_call
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_indirect_call.cpp
+                ENTRY test_me
+                PASSES "pluto-indirect-call"
                 RUNNER_SRC ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/test_main.cpp
                 EXPECTED_EXIT_CODE 4919
             )

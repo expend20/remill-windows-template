@@ -139,4 +139,84 @@ indirect_jmp_chain PROC
     jmp rax
 indirect_jmp_chain ENDP
 
+; Helper function for indirect call test - returns 0x1337
+call_target PROC
+    mov eax, 1337h
+    ret
+call_target ENDP
+
+; Test: Indirect call through register
+; Loads function address into register and calls it
+indirect_call_register PROC
+    sub rsp, 28h             ; Shadow space for Windows x64 calling convention
+    lea rax, call_target     ; Load address of target function
+    call rax                 ; Indirect call through register
+    add rsp, 28h
+    ret
+indirect_call_register ENDP
+
+; Test: Indirect call through memory (global pointer)
+; Reads function address from global and calls it
+.data
+call_target_ptr dq call_target
+
+; Function pointer table for indexed call test
+; Layout: [dummy0, dummy1, call_target, dummy3] with 16-byte offset before table
+call_table_padding dq 0, 0           ; 16 bytes of padding (offset)
+call_table         dq call_target_bad1  ; index 0
+                   dq call_target_bad2  ; index 1
+                   dq call_target       ; index 2 -> returns 0x1337
+                   dq call_target_bad3  ; index 3
+
+.code
+indirect_call_memory PROC
+    sub rsp, 28h
+    lea rax, call_target_ptr ; Get address of global pointer
+    mov rax, [rax]           ; Load function address from global
+    call rax                 ; Indirect call through loaded address
+    add rsp, 28h
+    ret
+indirect_call_memory ENDP
+
+; Helper targets for indexed call test (wrong values to verify correct index)
+call_target_bad1 PROC
+    mov eax, 1111h
+    ret
+call_target_bad1 ENDP
+
+call_target_bad2 PROC
+    mov eax, 2222h
+    ret
+call_target_bad2 ENDP
+
+call_target_bad3 PROC
+    mov eax, 3333h
+    ret
+call_target_bad3 ENDP
+
+; Test: Indirect call with complex addressing mode
+; Uses: call qword ptr [base + index*8 + offset]
+; This pattern is common for vtable calls and function pointer arrays
+indirect_call_indexed PROC
+    sub rsp, 28h
+    lea rax, call_table_padding  ; Base: start of padded area
+    mov rcx, 4                   ; Index: 4 (skips 2 padding + 2 table entries)
+                                 ; 4*8 = 32 bytes = 16 (padding) + 16 (2 entries)
+                                 ; So index 4 with base at padding = table[2] = call_target
+    call qword ptr [rax + rcx*8] ; call [base + index*8]
+    add rsp, 28h
+    ret
+indirect_call_indexed ENDP
+
+; Test: Indirect call with base + index*scale + displacement
+; Uses explicit offset in the addressing mode
+indirect_call_indexed_offset PROC
+    sub rsp, 28h
+    lea rax, call_table      ; Base: start of call_table (after padding)
+    mov rcx, 2               ; Index: 2
+    call qword ptr [rax + rcx*8 + 0]  ; call [base + index*8 + 0] -> table[2]
+    add rsp, 28h
+    ret
+indirect_call_indexed_offset ENDP
+
 END

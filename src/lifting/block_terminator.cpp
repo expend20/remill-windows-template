@@ -229,6 +229,65 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
       break;
     }
 
+    case remill::Instruction::kCategoryIndirectFunctionCall: {
+      // Indirect function call: call *%rax or call *[mem]
+      // The call semantics have already pushed the return address (next_addr) onto the stack
+      // and set PC to the target. We need to dispatch to the target and handle returns.
+      llvm::Value *target_pc = remill::LoadProgramCounter(block, *intrinsics);
+
+      if (target_pc) {
+        auto *entry_block = &block->getParent()->getEntryBlock();
+        std::vector<std::pair<uint64_t, llvm::BasicBlock *>> targets;
+        for (const auto &[addr, bb] : blocks) {
+          if (sameFunction(addr) && bb != entry_block) {
+            targets.push_back({addr, bb});
+          }
+        }
+
+        llvm::AllocaInst *memory_alloca = nullptr;
+        for (auto &inst : block->getParent()->getEntryBlock()) {
+          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+            if (alloca->getName() == "MEMORY") {
+              memory_alloca = alloca;
+              break;
+            }
+          }
+        }
+
+        if (memory_alloca) {
+          auto *dispatch_block = llvm::BasicBlock::Create(
+              ctx_.GetContext(), "indirect_call_dispatch", block->getParent());
+          builder.CreateBr(dispatch_block);
+
+          llvm::IRBuilder<> dispatch_builder(dispatch_block);
+
+          auto *default_block = llvm::BasicBlock::Create(
+              ctx_.GetContext(), "indirect_call_default", block->getParent());
+          llvm::IRBuilder<> default_builder(default_block);
+          auto *mem_ptr = default_builder.CreateLoad(default_builder.getPtrTy(), memory_alloca);
+          default_builder.CreateRet(mem_ptr);
+
+          auto *sw = dispatch_builder.CreateSwitch(target_pc, default_block, targets.size());
+          for (const auto &[addr, bb] : targets) {
+            sw->addCase(dispatch_builder.getInt64(addr), bb);
+          }
+
+          result_switch = sw;
+          iter_state.unresolved_indirect_jumps[block_addr] = sw;
+          dispatch_blocks[block_addr] = dispatch_block;
+
+          utils::dbg() << "Created indirect call switch with " << targets.size()
+                       << " known targets at " << llvm::format_hex(block_addr, 0)
+                       << ", return to " << llvm::format_hex(next_addr, 0) << "\n";
+        } else {
+          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+        }
+      } else {
+        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+      }
+      break;
+    }
+
     default:
       if (sameFunction(next_addr)) {
         builder.CreateBr(getBlock(next_addr));
