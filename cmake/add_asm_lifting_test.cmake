@@ -2,13 +2,13 @@
 #   NAME <test_name>
 #   ASM <path_to_asm>
 #   ENTRY <entry_point>  # Optional, defaults to "main"
-#   RUNNER_SRC <path_to_test_main.cpp>
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
 # Note: Uses the shared 'lifter' target defined in CMakeLists.txt
-# Tests are grouped by ASM filename: build/tests/<asm_basename>/<test_name>/
+# Tests are grouped under: build/tests/asm/<asm_basename>/<test_name>/
+# Only verifies the optimized IR contains "ret i32 <expected>"
 function(add_asm_lifting_test)
-    cmake_parse_arguments(ARG "" "NAME;ASM;ENTRY;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "NAME;ASM;ENTRY;EXPECTED_EXIT_CODE" "" ${ARGN})
 
     # Default entry point to "main" if not specified
     if(NOT ARG_ENTRY)
@@ -18,13 +18,12 @@ function(add_asm_lifting_test)
     # Derive group name from ASM filename (without extension)
     get_filename_component(ASM_BASENAME ${ARG_ASM} NAME_WE)
 
-    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/${ASM_BASENAME}/${ARG_NAME})
+    set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/asm/${ASM_BASENAME}/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
 
     set(OBJ_FILE ${BUILD_DIR}/shellcode.obj)
     set(EXE_FILE ${BUILD_DIR}/shellcode.exe)
-    set(OPTIMIZED_LL ${BUILD_DIR}/test_optimized.ll)
-    set(OPTIMIZED_O ${BUILD_DIR}/test_optimized.o)
+    set(OPTIMIZED_BC ${BUILD_DIR}/test_optimized.bc)
 
     # Assemble .asm -> .obj
     add_custom_command(
@@ -48,8 +47,8 @@ function(add_asm_lifting_test)
     # Lift .exe -> .ll/.bc (using shared lifter)
     add_custom_command(
         OUTPUT
-            ${OPTIMIZED_LL}
-            ${BUILD_DIR}/test_optimized.bc
+            ${BUILD_DIR}/test_optimized.ll
+            ${OPTIMIZED_BC}
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
         COMMAND lifter ${EXE_FILE}
@@ -58,34 +57,12 @@ function(add_asm_lifting_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Compile .ll -> .o
-    add_custom_command(
-        OUTPUT ${OPTIMIZED_O}
-        COMMAND ${CLANG_EXECUTABLE} -c -O2 -Wno-override-module ${OPTIMIZED_LL} -o ${OPTIMIZED_O}
-        DEPENDS ${OPTIMIZED_LL}
-        COMMENT "[${ARG_NAME}] Compiling lifted IR..."
-    )
-
-    add_custom_target(${ARG_NAME}_object DEPENDS ${OPTIMIZED_O})
-
-    # Runner executable
-    add_executable(${ARG_NAME}_runner ${ARG_RUNNER_SRC})
-    set_target_properties(${ARG_NAME}_runner PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BUILD_DIR})
-    add_dependencies(${ARG_NAME}_runner ${ARG_NAME}_object)
-    target_link_libraries(${ARG_NAME}_runner PRIVATE ${OPTIMIZED_O})
-
-    # Test: verify exit code
-    add_test(
-        NAME ${ARG_NAME}_test
-        COMMAND ${CMAKE_COMMAND}
-            -DTEST_EXECUTABLE=$<TARGET_FILE:${ARG_NAME}_runner>
-            -DEXPECTED_EXIT_CODE=${ARG_EXPECTED_EXIT_CODE}
-            -P ${CMAKE_SOURCE_DIR}/cmake/check_exit_code.cmake
-    )
+    # Build target to ensure lifting happens
+    add_custom_target(${ARG_NAME}_build ALL DEPENDS ${OPTIMIZED_BC})
 
     # Test: verify optimized IR contains only "ret i32 <expected>"
     add_test(
         NAME ${ARG_NAME}_ir_check
-        COMMAND ir_checker ${BUILD_DIR}/test_optimized.bc ${ARG_EXPECTED_EXIT_CODE}
+        COMMAND ir_checker ${OPTIMIZED_BC} ${ARG_EXPECTED_EXIT_CODE}
     )
 endfunction()

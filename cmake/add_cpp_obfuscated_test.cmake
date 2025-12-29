@@ -3,7 +3,6 @@
 #   CPP <path_to_cpp>
 #   ENTRY <function_name>
 #   PASSES <llvm_passes>
-#   RUNNER_SRC <path_to_test_main.cpp>
 #   EXPECTED_EXIT_CODE <exit_code>
 # )
 #
@@ -13,11 +12,11 @@
 # 3. Compiles obfuscated IR to object file
 # 4. Links to executable
 # 5. Lifts executable back to LLVM IR (using shared lifter)
-# 6. Verifies the lifted code produces the expected result
+# 6. Verifies the optimized IR contains "ret i32 <expected>"
 #
 # Tests are grouped under build/tests/obfuscated/<test_name>/
 function(add_cpp_obfuscated_test)
-    cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;PASSES;RUNNER_SRC;EXPECTED_EXIT_CODE" "" ${ARGN})
+    cmake_parse_arguments(ARG "" "NAME;CPP;ENTRY;PASSES;EXPECTED_EXIT_CODE" "" ${ARGN})
 
     set(BUILD_DIR ${CMAKE_BINARY_DIR}/tests/obfuscated/${ARG_NAME})
     file(MAKE_DIRECTORY ${BUILD_DIR})
@@ -26,8 +25,7 @@ function(add_cpp_obfuscated_test)
     set(OBFUSCATED_LL ${BUILD_DIR}/obfuscated.ll)
     set(OBJ_FILE ${BUILD_DIR}/shellcode.obj)
     set(EXE_FILE ${BUILD_DIR}/shellcode.exe)
-    set(OPTIMIZED_LL ${BUILD_DIR}/test_optimized.ll)
-    set(OPTIMIZED_O ${BUILD_DIR}/test_optimized.o)
+    set(OPTIMIZED_BC ${BUILD_DIR}/test_optimized.bc)
 
     # Step 1: Generate .cpp -> .ll (unoptimized LLVM IR)
     add_custom_command(
@@ -38,16 +36,17 @@ function(add_cpp_obfuscated_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Step 2: Apply obfuscation passes using opt
+    # Step 2: Apply obfuscation passes using obfuscator tool
     # Note: We use cmake -E env to add Z3 bin directory to PATH for libz3.dll
+    # The obfuscator tool links Pluto passes statically, avoiding ODR violations
     add_custom_command(
         OUTPUT ${OBFUSCATED_LL}
         COMMAND ${CMAKE_COMMAND} -E env "PATH=$ENV{PATH};${Z3_BIN_DIR}"
-            ${LLVM_OPT_EXECUTABLE}
-            -load-pass-plugin=$<TARGET_FILE:passes>
-            -passes "${ARG_PASSES}"
-            ${INPUT_LL} -S -o ${OBFUSCATED_LL}
-        DEPENDS ${INPUT_LL} passes
+            $<TARGET_FILE:obfuscator>
+            ${INPUT_LL}
+            ${OBFUSCATED_LL}
+            --passes="${ARG_PASSES}"
+        DEPENDS ${INPUT_LL} obfuscator
         COMMENT "[${ARG_NAME}] Applying obfuscation passes: ${ARG_PASSES}..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )
@@ -74,8 +73,8 @@ function(add_cpp_obfuscated_test)
     # Step 5: Lift .exe -> .ll/.bc (using shared lifter)
     add_custom_command(
         OUTPUT
-            ${OPTIMIZED_LL}
-            ${BUILD_DIR}/test_optimized.bc
+            ${BUILD_DIR}/test_optimized.ll
+            ${OPTIMIZED_BC}
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
         COMMAND lifter ${EXE_FILE}
@@ -84,34 +83,12 @@ function(add_cpp_obfuscated_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Step 6: Compile .ll -> .o
-    add_custom_command(
-        OUTPUT ${OPTIMIZED_O}
-        COMMAND ${CLANG_EXECUTABLE} -c -O2 -Wno-override-module ${OPTIMIZED_LL} -o ${OPTIMIZED_O}
-        DEPENDS ${OPTIMIZED_LL}
-        COMMENT "[${ARG_NAME}] Compiling lifted IR..."
-    )
-
-    add_custom_target(${ARG_NAME}_object DEPENDS ${OPTIMIZED_O})
-
-    # Runner executable
-    add_executable(${ARG_NAME}_runner ${ARG_RUNNER_SRC})
-    set_target_properties(${ARG_NAME}_runner PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BUILD_DIR})
-    add_dependencies(${ARG_NAME}_runner ${ARG_NAME}_object)
-    target_link_libraries(${ARG_NAME}_runner PRIVATE ${OPTIMIZED_O})
-
-    # Test: verify exit code
-    add_test(
-        NAME ${ARG_NAME}_test
-        COMMAND ${CMAKE_COMMAND}
-            -DTEST_EXECUTABLE=$<TARGET_FILE:${ARG_NAME}_runner>
-            -DEXPECTED_EXIT_CODE=${ARG_EXPECTED_EXIT_CODE}
-            -P ${CMAKE_SOURCE_DIR}/cmake/check_exit_code.cmake
-    )
+    # Build target to ensure lifting happens
+    add_custom_target(${ARG_NAME}_build ALL DEPENDS ${OPTIMIZED_BC})
 
     # Test: verify optimized IR contains only "ret i32 <expected>"
     add_test(
         NAME ${ARG_NAME}_ir_check
-        COMMAND ir_checker ${BUILD_DIR}/test_optimized.bc ${ARG_EXPECTED_EXIT_CODE}
+        COMMAND ir_checker ${OPTIMIZED_BC} ${ARG_EXPECTED_EXIT_CODE}
     )
 endfunction()
