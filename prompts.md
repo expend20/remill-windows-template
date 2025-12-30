@@ -21,11 +21,11 @@ Refactor hello world test:
 
 - there's more tests like that to come, I need you to move all reusable code one directory up, refactor it into small reusable components
 - optimization code should be in a separate directory
-- rename hello world test into ret_with_code test
+- rename hello world test into const test
 
 ---
 
-refactor ret_with_code test, I need shellcode to be compiled from assembly, use masm (ml64.exe from env) to compile the assembly, then write very siplistic pe64 reader to get the shellcode bytes from .exe file, then lift it
+refactor const test, I need shellcode to be compiled from assembly, use masm (ml64.exe from env) to compile the assembly, then write very siplistic pe64 reader to get the shellcode bytes from .exe file, then lift it
 
 scalable-foraging-boot.md
 
@@ -115,7 +115,7 @@ There's an optimization folding issue with xtea_substitution test, final test_op
 ---
 
 Up until now all the deobfuscation/lifting/optimization happened on the assumption that everything is a constant
-(@src\tests\ret_with_code\). I need a new feature that would describe external/unknown variables. E.g. let's write .asm test with "mov
+(@src\tests\const\). I need a new feature that would describe external/unknown variables. E.g. let's write .asm test with "mov
 rax, rcx; add rax, 0x1337; ret". I need to describe somehow when lifting this particular test (create a new directory btw,
 src/tests/variable) that rcx is not a constant but a unknown variable that can't be optimized away or folded. I need the similar testing
  environment as for existing .asm files, but there should be no .ll file checker, instead there sould be a run test where the lifted

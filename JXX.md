@@ -154,7 +154,7 @@ The loop computing `1+2+...+37 + 0x1078 = 0x1337` is completely eliminated at co
 
 - `src/lifting/control_flow_lifter.h` - Class declaration
 - `src/lifting/control_flow_lifter.cpp` - Implementation
-- `src/tests/ret_with_code/loop_sum.asm` - Test case with conditional jump
+- `src/tests/const/loop_sum.asm` - Test case with conditional jump
 
 ---
 

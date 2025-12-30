@@ -6,7 +6,7 @@ The lifter currently cannot handle indirect jumps (e.g., `jmp rax`) because it l
 
 ## Test Case
 
-`src/tests/ret_with_code/indirect_jmp.asm`:
+`src/tests/const/indirect_jmp.asm`:
 ```asm
 .code
 
@@ -81,7 +81,7 @@ LLVM already has powerful data flow analysis. After lifting and inlining, the IR
 
 ```llvm
 ; In @test(), we call with constant PC:
-call ptr @lifted_ret_with_code(ptr %state, i64 5368713222, ptr undef)
+call ptr @lifted_const(ptr %state, i64 5368713222, ptr undef)
 
 ; Inside lifted function, LEA computes:
 %0 = load i64, ptr %NEXT_PC           ; = 0x140001006 (from constant arg)

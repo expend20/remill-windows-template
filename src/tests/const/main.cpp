@@ -1,4 +1,4 @@
-// Test: ret_with_code
+// Test: const
 // Lifts a simple function that returns a constant value: mov eax, 0x1337; ret
 // Verifies that the lifted and optimized code produces: ret i32 4919
 
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
   uint64_t entry_point = pe_info->image_base + pe_info->entry_point_rva;
 
   // Create lifted function in semantics module (required by remill's instruction lifter)
-  auto *lifted_func = ctx.DefineLiftedFunction("lifted_ret_with_code");
+  auto *lifted_func = ctx.DefineLiftedFunction("lifted_const");
 
   // Use control flow-aware lifter to handle jumps and loops
   lifting::ControlFlowLifter lifter(ctx);
@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
   // This gives us a small "lifted.ll" without the full 7MB runtime
   auto extracted_module = utils::ExtractFunctions(
       ctx.GetSemanticsModule(),
-      {"test", "lifted_ret_with_code"},
+      {"test", "lifted_const"},
       "lifted_code");
   utils::WriteModule(extracted_module.get(), "lifted");
 

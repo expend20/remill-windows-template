@@ -9,7 +9,7 @@ When lifting code with function calls, we need to handle the call/return semanti
 All code (main + helpers) was lifted into ONE LLVM function with multiple basic blocks. Function calls and returns were modeled as branches between blocks:
 
 ```
-lifted_ret_with_code():
+lifted_const():
   ; Main's code
   bb_main:
     ... setup ...

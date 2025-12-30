@@ -70,7 +70,7 @@ else()
     include(add_variable_test)
 
     # Shared lifter executable for all tests
-    add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp)
+    add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/const/main.cpp)
     target_link_libraries(lifter PRIVATE lifting_common)
 
     # IR checker tool for verifying optimized IR
@@ -92,14 +92,14 @@ else()
     # Basic return value tests (basic_return.asm)
     add_asm_lifting_test(
         NAME basic_mov_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/basic_return.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/basic_return.asm
         ENTRY mov_const
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME basic_alu_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/basic_return.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/basic_return.asm
         ENTRY alu_const
         EXPECTED_EXIT_CODE 4919
     )
@@ -107,105 +107,105 @@ else()
     # Global memory access tests (global_memory.asm)
     add_asm_lifting_test(
         NAME global_bytewise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY bytewise_write
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_unaligned_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY unaligned_read
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_wordwise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY wordwise_write
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_qword_access
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY qword_access
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_dword_to_bytes
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY dword_to_bytes
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_zero_extend_byte
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY zero_extend_byte
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_zero_extend_word
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY zero_extend_word
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_sign_extend_byte
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY sign_extend_byte
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_read_modify_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY read_modify_write
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_read_initialized
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY read_initialized
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_array_const_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY array_const_index
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_array_reg_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY array_reg_index
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_unaligned_qword
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY unaligned_qword
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_multi_global
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY multi_global
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME global_overlapping_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
         ENTRY overlapping_write
         EXPECTED_EXIT_CODE 4919
     )
@@ -213,14 +213,14 @@ else()
     # Stack memory access tests (stack_memory.asm)
     add_asm_lifting_test(
         NAME stack_bytewise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/stack_memory.asm
         ENTRY bytewise_write
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME stack_unaligned_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/stack_memory.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/stack_memory.asm
         ENTRY unaligned_read
         EXPECTED_EXIT_CODE 4919
     )
@@ -228,7 +228,7 @@ else()
     # Cross-section memory tests (rdata_to_stack.asm)
     add_asm_lifting_test(
         NAME rdata_to_stack
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/rdata_to_stack.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/rdata_to_stack.asm
         ENTRY rdata_to_stack
         EXPECTED_EXIT_CODE 4919
     )
@@ -236,7 +236,7 @@ else()
     # Loop handling tests (loops.asm)
     add_asm_lifting_test(
         NAME loop_sum
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/loops.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/loops.asm
         ENTRY sum_loop
         EXPECTED_EXIT_CODE 4919
     )
@@ -244,28 +244,28 @@ else()
     # Direct branch tests (direct_branch.asm)
     add_asm_lifting_test(
         NAME call_direct
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
         ENTRY call_helper
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME jmp_direct
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
         ENTRY direct_jmp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME jmp_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
         ENTRY jmp_chain
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME call_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/direct_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
         ENTRY call_chain
         EXPECTED_EXIT_CODE 4919
     )
@@ -273,63 +273,63 @@ else()
     # Indirect branch tests (indirect_branch.asm)
     add_asm_lifting_test(
         NAME indirect_register_jmp
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY register_jmp
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_push_ret
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY push_ret
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_jump_table
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY jump_table
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_jump_table_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY jump_table_index
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_jmp_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY indirect_jmp_chain
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_call_register
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY indirect_call_register
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_call_memory
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY indirect_call_memory
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_call_indexed
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY indirect_call_indexed
         EXPECTED_EXIT_CODE 4919
     )
 
     add_asm_lifting_test(
         NAME indirect_call_indexed_offset
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/indirect_branch.asm
+        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
         ENTRY indirect_call_indexed_offset
         EXPECTED_EXIT_CODE 4919
     )
@@ -353,21 +353,21 @@ else()
 
         add_cpp_lifting_test(
             NAME ret_const
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/ret_const.cpp
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/ret_const.cpp
             ENTRY test_me
             EXPECTED_EXIT_CODE 4919
         )
 
         add_cpp_lifting_test(
             NAME global_var
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var.cpp
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/global_var.cpp
             ENTRY test_me
             EXPECTED_EXIT_CODE 4919
         )
 
         add_cpp_lifting_test(
             NAME xtea_roundtrip
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_roundtrip.cpp
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_roundtrip.cpp
             ENTRY test_me
             EXPECTED_EXIT_CODE 4919
         )
@@ -376,7 +376,7 @@ else()
         # See FUNCTION_INLINING.md for details
         add_cpp_lifting_test(
             NAME xtea_noinline
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_noinline.cpp
+            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_noinline.cpp
             ENTRY test_me
             EXPECTED_EXIT_CODE 4919
         )
@@ -404,7 +404,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME global_var_pluto
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/global_var_pluto.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/global_var_pluto.cpp
                 ENTRY test_me
                 PASSES "pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution"
                         EXPECTED_EXIT_CODE 4919
@@ -412,7 +412,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME xtea_substitution
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_substitution.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_substitution.cpp
                 ENTRY test_me
                 PASSES "pluto-substitution"
                         EXPECTED_EXIT_CODE 4919
@@ -420,7 +420,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME xtea_flattening
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_flattening.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_flattening.cpp
                 ENTRY test_me
                 PASSES "pluto-flattening"
                         EXPECTED_EXIT_CODE 4919
@@ -430,7 +430,7 @@ else()
             # which is not available with custom entry point (no CRT)
             # add_cpp_obfuscated_test(
             #     NAME xtea_bogus_cfg
-            #     CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_bogus_cfg.cpp
+            #     CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_bogus_cfg.cpp
             #     ENTRY test_me
             #     PASSES "pluto-bogus-control-flow"
             #     EXPECTED_EXIT_CODE 4919
@@ -438,7 +438,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME xtea_global_encryption
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_global_encryption.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_global_encryption.cpp
                 ENTRY test_me
                 PASSES "pluto-global-encryption"
                         EXPECTED_EXIT_CODE 4919
@@ -446,7 +446,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME xtea_indirect_call
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_indirect_call.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_indirect_call.cpp
                 ENTRY test_me
                 PASSES "pluto-indirect-call"
                         EXPECTED_EXIT_CODE 4919
@@ -454,7 +454,7 @@ else()
 
             add_cpp_obfuscated_test(
                 NAME xtea_mba
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_mba.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_mba.cpp
                 ENTRY test_me
                 PASSES "pluto-mba-obfuscation"
                         EXPECTED_EXIT_CODE 4919
@@ -466,7 +466,7 @@ else()
             # from function passes using module(function(...)) wrapper syntax
             add_cpp_obfuscated_test(
                 NAME xtea_all_pluto
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/xtea_all_pluto.cpp
+                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_all_pluto.cpp
                 ENTRY test_me
                 PASSES "module(function(pluto-substitution,pluto-flattening)),pluto-indirect-call,pluto-global-encryption"
                         EXPECTED_EXIT_CODE 4919
