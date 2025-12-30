@@ -1,5 +1,6 @@
 // Variable lifting test
 // Lifts code with variable (non-constant) register inputs
+// Also supports external function calls (imports like puts)
 // Produces an executable that takes input values and returns the computed result
 
 #include <cstdlib>
@@ -11,68 +12,18 @@
 #include <remill/BC/Util.h>
 
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/Support/JSON.h>
-#include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include "lifting/lifting_context.h"
 #include "lifting/control_flow_lifter.h"
 #include "lifting/memory_lowering.h"
 #include "lifting/wrapper_builder.h"
+#include "lifting/variable_config.h"
+#include "lifting/external_call_handler.h"
 #include "optimization/optimizer.h"
 #include "utils/debug_flag.h"
 #include "utils/module_utils.h"
 #include "utils/pe_reader.h"
-
-// Config structure parsed from JSON
-struct VariableTestConfig {
-  std::vector<std::string> variables;
-  std::string return_register = "rax";
-};
-
-// Parse config from JSON file using LLVM's JSON parser
-std::optional<VariableTestConfig> ParseConfig(const std::string &config_path) {
-  auto buffer = llvm::MemoryBuffer::getFile(config_path);
-  if (!buffer) {
-    std::cerr << "Failed to read config file: " << config_path << "\n";
-    return std::nullopt;
-  }
-
-  auto json = llvm::json::parse(buffer.get()->getBuffer());
-  if (!json) {
-    std::cerr << "Failed to parse JSON: " << llvm::toString(json.takeError()) << "\n";
-    return std::nullopt;
-  }
-
-  auto *root = json->getAsObject();
-  if (!root) {
-    std::cerr << "Config must be a JSON object\n";
-    return std::nullopt;
-  }
-
-  VariableTestConfig config;
-
-  // Parse "variables": ["rcx", "rdx", ...]
-  if (auto *vars = root->getArray("variables")) {
-    for (const auto &var : *vars) {
-      if (auto str = var.getAsString()) {
-        config.variables.push_back(str->str());
-      }
-    }
-  }
-
-  // Parse "return_register": "rax"
-  if (auto ret = root->getString("return_register")) {
-    config.return_register = ret->str();
-  }
-
-  if (config.variables.empty()) {
-    std::cerr << "No variables found in config\n";
-    return std::nullopt;
-  }
-
-  return config;
-}
 
 // Generate main function that parses args and calls test function
 void GenerateMainFunction(llvm::Module *module, llvm::Function *test_func,
@@ -149,17 +100,27 @@ int main(int argc, char **argv) {
   }
 
   // Parse config
-  auto config = ParseConfig(config_path);
+  auto config = lifting::ParseVariableConfig(config_path);
   if (!config) {
     return EXIT_FAILURE;
   }
 
-  std::cout << "Variable registers: ";
-  for (const auto &var : config->variables) {
-    std::cout << var << " ";
+  if (config->HasVariableInputs()) {
+    std::cout << "Variable registers: ";
+    for (const auto &var : config->input_registers) {
+      std::cout << var << " ";
+    }
+    std::cout << "\n";
   }
-  std::cout << "\n";
   std::cout << "Return register: " << config->return_register << "\n";
+
+  if (config->external_calls.HasExternalCalls()) {
+    std::cout << "External calls configured: ";
+    for (const auto &[name, cfg] : config->external_calls.GetAllConfigs()) {
+      std::cout << name << "(" << cfg.arg_types.size() << " args) ";
+    }
+    std::cout << "\n";
+  }
 
   // Read full PE file
   auto pe_info = utils::ReadPE(shellcode_path);
@@ -176,11 +137,38 @@ int main(int argc, char **argv) {
   }
 
   std::cout << "Loaded PE with " << pe_info->sections.size() << " sections\n";
+  std::cout << "Found " << pe_info->imports.size() << " imports\n";
+
+  // Print imports for debugging
+  for (const auto &import : pe_info->imports) {
+    utils::dbg() << "Import: " << import.dll_name << "::" << import.function_name
+                 << " at IAT VA " << llvm::format_hex(import.iat_va, 0) << "\n";
+  }
+
+  // Link external call config with PE imports
+  config->external_calls.LinkWithImports(pe_info->imports);
 
   // Initialize lifting context
   lifting::LiftingContext ctx("windows", "amd64");
   if (!ctx.IsValid()) {
     return EXIT_FAILURE;
+  }
+
+  // Create external call handler (may be empty if no external calls configured)
+  lifting::ExternalCallHandler external_handler(ctx, config->external_calls);
+
+  // Configure handler with PE info for pointer resolution
+  external_handler.SetPEInfo(&(*pe_info));
+  external_handler.SetResolvePointerData(config->resolve_pointer_data);
+
+  if (config->resolve_pointer_data) {
+    std::cout << "Pointer data resolution: enabled\n";
+  }
+
+  // Create external function declarations BEFORE lifting
+  // so they're available when generating external calls
+  if (config->external_calls.HasExternalCalls()) {
+    external_handler.CreateDeclarations(ctx.GetSemanticsModule());
   }
 
   // Calculate addresses
@@ -193,6 +181,11 @@ int main(int argc, char **argv) {
   // Use control flow-aware lifter
   lifting::ControlFlowLifter lifter(ctx);
   lifter.SetPEInfo(&(*pe_info));
+
+  // Set external call handler if we have external calls
+  if (config->external_calls.HasExternalCalls()) {
+    lifter.SetExternalCallHandler(&external_handler);
+  }
 
   // Configure iterative lifting
   lifting::IterativeLiftingConfig lift_config;
@@ -215,14 +208,18 @@ int main(int argc, char **argv) {
   // Prepare lifted function for inlining
   lifting::WrapperBuilder::PrepareForInlining(lifted_func);
 
-  // Create parameterized wrapper with variable registers
-  lifting::VariableConfig var_config;
-  var_config.input_registers = config->variables;
-  var_config.return_register = config->return_register;
-
+  // Create wrapper (with or without variable registers)
+  llvm::Function *wrapper = nullptr;
   lifting::WrapperBuilder wrapper_builder(ctx);
-  auto *wrapper = wrapper_builder.CreateParameterizedWrapper(
-      "test", lifted_func, entry_point, var_config);
+
+  if (!config->HasVariableInputs()) {
+    // No variable inputs - create constant wrapper
+    wrapper = wrapper_builder.CreateInt32ReturnWrapper("test", lifted_func, entry_point);
+  } else {
+    // Variable inputs - create parameterized wrapper
+    wrapper = wrapper_builder.CreateParameterizedWrapper(
+        "test", lifted_func, entry_point, *config);
+  }
 
   // Create backing globals from PE sections
   auto memory_info = lifting::CreateMemoryGlobals(ctx.GetSemanticsModule(), *pe_info);
@@ -246,8 +243,13 @@ int main(int argc, char **argv) {
                                  &stack_info, wrapper);
 
   // Extract to clean module for optimization
+  // Include external function declarations if present
+  std::vector<std::string> funcs_to_extract = {"test"};
+  for (const auto &[name, cfg] : config->external_calls.GetAllConfigs()) {
+    funcs_to_extract.push_back(name);
+  }
   auto opt_module = utils::ExtractFunctions(
-      ctx.GetSemanticsModule(), {"test"}, "test_optimized");
+      ctx.GetSemanticsModule(), funcs_to_extract, "test_optimized");
 
   // Remove flag computation intrinsics
   optimization::RemoveFlagComputationIntrinsics(opt_module.get());
@@ -255,23 +257,56 @@ int main(int argc, char **argv) {
   // Run aggressive optimization
   optimization::OptimizeAggressive(opt_module.get());
 
+  // Resolve pointer data in external call arguments (if enabled)
+  // This must happen after optimization when constant values are known
+  if (config->resolve_pointer_data) {
+    size_t resolved = external_handler.ResolveConstantPointers(opt_module.get());
+    if (resolved > 0) {
+      std::cout << "Resolved " << resolved << " pointer argument(s) to globals\n";
+    }
+  }
+
   // Write the optimized module
   utils::WriteModule(opt_module.get(), "test_optimized");
 
-  // Generate main function for test runner
-  auto *test_func = opt_module->getFunction("test");
-  if (!test_func) {
-    std::cerr << "Test function not found after optimization\n";
-    return EXIT_FAILURE;
+  // Verify external calls are present (if configured)
+  bool found_external_call = false;
+  if (auto *test_func = opt_module->getFunction("test")) {
+    for (auto &BB : *test_func) {
+      for (auto &I : BB) {
+        if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+          if (auto *callee = call->getCalledFunction()) {
+            if (config->external_calls.FindByName(callee->getName().str())) {
+              std::cout << "External call preserved: " << callee->getName().str() << "\n";
+              found_external_call = true;
+            }
+          }
+        }
+      }
+    }
   }
 
-  GenerateMainFunction(opt_module.get(), test_func, config->variables);
+  if (config->external_calls.HasExternalCalls() && !found_external_call) {
+    std::cerr << "WARNING: Expected external calls were not found in optimized IR\n";
+  }
 
-  // Write module with main function
-  utils::WriteModule(opt_module.get(), "test_runner");
+  // Generate main function for variable test runner (only if we have variables)
+  if (config->HasVariableInputs()) {
+    auto *test_func = opt_module->getFunction("test");
+    if (!test_func) {
+      std::cerr << "Test function not found after optimization\n";
+      return EXIT_FAILURE;
+    }
+
+    GenerateMainFunction(opt_module.get(), test_func, config->input_registers);
+
+    // Write module with main function
+    utils::WriteModule(opt_module.get(), "test_runner");
+    std::cout << "Written: test_runner.ll, test_runner.bc\n";
+  }
 
   std::cout << "Written: test_optimized.ll, test_optimized.bc\n";
-  std::cout << "Written: test_runner.ll, test_runner.bc\n";
+  std::cout << "Written: lifted.ll, lifted.bc\n";
 
   return EXIT_SUCCESS;
 }

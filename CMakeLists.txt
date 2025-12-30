@@ -23,6 +23,8 @@ add_library(lifting_common STATIC
     src/lifting/indirect_jump_resolver.cpp
     src/lifting/wrapper_builder.cpp
     src/lifting/memory_lowering.cpp
+    src/lifting/variable_config.cpp
+    src/lifting/external_call_handler.cpp
     src/optimization/optimizer.cpp
     src/optimization/stack_slot_splitter.cpp
     src/utils/debug_flag.cpp
@@ -68,6 +70,7 @@ else()
     include(add_asm_lifting_test)
     include(add_cpp_lifting_test)
     include(add_variable_test)
+    include(add_external_call_test)
 
     # Shared lifter executable for all tests
     add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/const/main.cpp)
@@ -81,6 +84,7 @@ else()
     # Variable lifter executable for tests with variable (non-constant) inputs
     add_executable(variable_lifter ${CMAKE_SOURCE_DIR}/src/tests/variable/main.cpp)
     target_link_libraries(variable_lifter PRIVATE lifting_common)
+
 
     # Pluto obfuscation passes (static library) and obfuscator tool
     # This replaces the llvm-ob-passes plugin approach to avoid ODR violations
@@ -347,6 +351,16 @@ else()
     else()
         message(STATUS "llc not found, variable tests will not be available")
     endif()
+
+    # External call tests (functions that call external APIs like puts)
+    add_external_call_test(
+        NAME external_puts
+        CPP ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_global_const.cpp
+        CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_global_const.config.json
+        ENTRY test_proc
+        EXPECTED_EXIT_CODE 4919
+        WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
+    )
 
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")

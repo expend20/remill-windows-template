@@ -10,6 +10,9 @@
 
 namespace lifting {
 
+// Forward declaration - full definition in variable_config.h
+struct VariableConfig;
+
 // Stack memory constants for lifted code
 // Initial RSP value (high address, stack grows down)
 constexpr uint64_t INITIAL_RSP = 0x7FFFFF000000ULL;
@@ -18,12 +21,6 @@ constexpr uint64_t INITIAL_RSP = 0x7FFFFF000000ULL;
 // and accommodate RSP growth during RET dispatch loops
 // XTEA test needs substantial headroom for complex control flow
 constexpr uint64_t STACK_SIZE = 4096ULL;
-
-// Configuration for variable (non-constant) registers
-struct VariableConfig {
-  std::vector<std::string> input_registers;  // e.g., ["RCX", "RDX"]
-  std::string return_register = "RAX";
-};
 
 // Builds wrapper functions that call lifted code with native calling convention
 class WrapperBuilder {

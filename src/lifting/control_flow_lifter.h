@@ -20,6 +20,9 @@
 
 namespace lifting {
 
+// Forward declaration
+class ExternalCallHandler;
+
 // Information about a decoded instruction
 struct DecodedInstruction {
   uint64_t address;
@@ -59,6 +62,9 @@ class ControlFlowLifter {
 
   // Set PE info for resolving indirect jumps through global variables
   void SetPEInfo(const utils::PEInfo *pe_info);
+
+  // Set external call handler for detecting and generating external calls
+  void SetExternalCallHandler(ExternalCallHandler *handler);
 
   // Get iteration statistics (for debugging)
   const IterativeLiftingState &GetIterationState() const;
@@ -189,6 +195,9 @@ class ControlFlowLifter {
 
   // PE info for reading global variables during indirect jump resolution
   const utils::PEInfo *pe_info_ = nullptr;
+
+  // External call handler for detecting and generating external calls
+  ExternalCallHandler *external_handler_ = nullptr;
 };
 
 }  // namespace lifting

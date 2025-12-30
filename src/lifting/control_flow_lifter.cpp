@@ -10,6 +10,7 @@
 
 #include "block_decoder.h"
 #include "block_terminator.h"
+#include "external_call_handler.h"
 #include "function_splitter.h"
 #include "indirect_jump_resolver.h"
 #include "optimization/optimizer.h"
@@ -26,6 +27,10 @@ void ControlFlowLifter::SetIterativeConfig(const IterativeLiftingConfig &config)
 
 void ControlFlowLifter::SetPEInfo(const utils::PEInfo *pe_info) {
   pe_info_ = pe_info;
+}
+
+void ControlFlowLifter::SetExternalCallHandler(ExternalCallHandler *handler) {
+  external_handler_ = handler;
 }
 
 const IterativeLiftingState &ControlFlowLifter::GetIterationState() const {
@@ -180,7 +185,7 @@ void ControlFlowLifter::CreateBasicBlocksIncremental() {
 }
 
 bool ControlFlowLifter::LiftPendingBlocks() {
-  BlockTerminator terminator(ctx_);
+  BlockTerminator terminator(ctx_, external_handler_);
 
   for (uint64_t block_addr : block_starts_) {
     if (iter_state_.lifted_blocks.count(block_addr)) {
@@ -382,6 +387,13 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
                  << "resolved indirect jumps\n";
 
     for (uint64_t target : new_targets) {
+      // Filter out targets outside the code section
+      if (target < code_start_ || target >= code_end_) {
+        utils::dbg() << "Skipping out-of-bounds target " << llvm::format_hex(target, 0)
+                     << " (code range: " << llvm::format_hex(code_start_, 0)
+                     << " - " << llvm::format_hex(code_end_, 0) << ")\n";
+        continue;
+      }
       if (!iter_state_.lifted_blocks.count(target)) {
         iter_state_.pending_blocks.insert(target);
         iter_state_.block_discovery_iteration[target] = iteration + 1;
@@ -519,7 +531,7 @@ void ControlFlowLifter::CreateBasicBlocks(llvm::Function *func) {
 
 bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
                                     uint64_t code_base) {
-  BlockTerminator terminator(ctx_);
+  BlockTerminator terminator(ctx_, external_handler_);
 
   for (auto it = block_starts_.begin(); it != block_starts_.end(); ++it) {
     uint64_t block_addr = *it;
@@ -578,7 +590,7 @@ llvm::SwitchInst *ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
                                                   const DecodedInstruction &last_instr,
                                                   uint64_t next_addr,
                                                   uint64_t block_addr) {
-  BlockTerminator terminator(ctx_);
+  BlockTerminator terminator(ctx_, external_handler_);
   return terminator.FinishBlock(block, last_instr, next_addr, block_addr,
                                 blocks_, block_owner_, helper_functions_,
                                 iter_state_, dispatch_blocks_);

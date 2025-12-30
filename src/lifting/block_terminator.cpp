@@ -6,13 +6,135 @@
 #include <llvm/Support/Format.h>
 #include <remill/BC/Util.h>
 
+#include "external_call_handler.h"
 #include "lifting_context.h"
 #include "utils/debug_flag.h"
 
 namespace lifting {
 
-BlockTerminator::BlockTerminator(LiftingContext &ctx)
-    : ctx_(ctx) {}
+BlockTerminator::BlockTerminator(LiftingContext &ctx,
+                                 ExternalCallHandler *external_handler)
+    : ctx_(ctx), external_handler_(external_handler) {}
+
+uint64_t BlockTerminator::ExtractIndirectCallMemoryAddress(
+    const remill::Instruction &instr) {
+  // Look for an address operand that is a memory read (for indirect calls/jumps)
+  for (const auto &op : instr.operands) {
+    if (op.type == remill::Operand::kTypeAddress &&
+        (op.addr.kind == remill::Operand::Address::kControlFlowTarget ||
+         op.addr.kind == remill::Operand::Address::kMemoryRead)) {
+      // For RIP-relative addressing: effective_addr = next_pc + displacement
+      // For absolute addressing or register-based: can't compute statically
+      // Remill uses NEXT_PC as the base register for RIP-relative addressing
+      if (op.addr.base_reg.name == "RIP" || op.addr.base_reg.name == "PC" ||
+          op.addr.base_reg.name == "NEXT_PC") {
+        // RIP-relative: next_pc + displacement
+        return instr.next_pc + op.addr.displacement;
+      } else if (op.addr.base_reg.name.empty() &&
+                 op.addr.index_reg.name.empty()) {
+        // Absolute address (just displacement)
+        return static_cast<uint64_t>(op.addr.displacement);
+      }
+      // Otherwise it's register-based and we can't compute statically
+    }
+  }
+  return 0;
+}
+
+bool BlockTerminator::GenerateExternalCall(
+    llvm::BasicBlock *block,
+    const ExternalCallConfig *config,
+    uint64_t next_addr,
+    const std::map<uint64_t, llvm::BasicBlock *> &blocks,
+    const std::map<uint64_t, uint64_t> &block_owner,
+    uint64_t current_owner) {
+
+  llvm::IRBuilder<> builder(block);
+  auto *intrinsics = ctx_.GetIntrinsics();
+
+  // Get the external function
+  auto *ext_func = external_handler_->GetExternalFunction(config->name);
+  if (!ext_func) {
+    utils::dbg() << "External function not found: " << config->name << "\n";
+    return false;
+  }
+
+  // Find STATE pointer in entry block
+  llvm::Value *state_ptr = nullptr;
+  for (auto &inst : block->getParent()->getEntryBlock()) {
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+      if (alloca->getName() == "STATE") {
+        state_ptr = builder.CreateLoad(builder.getPtrTy(), alloca);
+        break;
+      }
+    }
+  }
+
+  if (!state_ptr) {
+    utils::dbg() << "STATE pointer not found for external call\n";
+    return false;
+  }
+
+  // Load arguments from State registers (Win64: RCX, RDX, R8, R9)
+  std::vector<llvm::Value *> args;
+
+  // Win64 calling convention argument registers
+  static const char *arg_regs[] = {"RCX", "RDX", "R8", "R9"};
+  size_t num_args = std::min(config->arg_types.size(), size_t(4));
+
+  for (size_t i = 0; i < num_args; ++i) {
+    auto *reg = ctx_.GetRegister(arg_regs[i]);
+    if (!reg) {
+      utils::dbg() << "Register " << arg_regs[i] << " not found\n";
+      continue;
+    }
+
+    // Get the register value from State
+    auto reg_ptr = reg->AddressOf(state_ptr, block);
+    auto *reg_val = builder.CreateLoad(builder.getInt64Ty(), reg_ptr);
+
+    // Convert to the expected type
+    const std::string &arg_type = config->arg_types[i];
+    if (arg_type == "ptr") {
+      // Convert i64 to ptr
+      args.push_back(builder.CreateIntToPtr(reg_val, builder.getPtrTy()));
+    } else if (arg_type == "i32") {
+      args.push_back(builder.CreateTrunc(reg_val, builder.getInt32Ty()));
+    } else {
+      // Default: pass as i64
+      args.push_back(reg_val);
+    }
+  }
+
+  // Create the call
+  auto *result = builder.CreateCall(ext_func, args);
+
+  // Store result to RAX
+  auto *rax_reg = ctx_.GetRegister("RAX");
+  if (rax_reg) {
+    auto rax_ptr = rax_reg->AddressOf(state_ptr, block);
+    builder.CreateStore(result, rax_ptr);
+  }
+
+  // Continue to next block or return
+  auto sameFunction = [&blocks, &block_owner, current_owner](uint64_t target_addr) -> bool {
+    if (!blocks.count(target_addr)) return false;
+    auto it = block_owner.find(target_addr);
+    uint64_t target_owner = (it != block_owner.end()) ? it->second : 0;
+    return target_owner == current_owner;
+  };
+
+  if (sameFunction(next_addr)) {
+    builder.CreateBr(blocks.at(next_addr));
+  } else {
+    builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+  }
+
+  utils::dbg() << "Generated external call to " << config->name
+               << " with " << args.size() << " args\n";
+
+  return true;
+}
 
 llvm::SwitchInst *BlockTerminator::FinishBlock(
     llvm::BasicBlock *block,
@@ -175,6 +297,87 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
     }
 
     case remill::Instruction::kCategoryIndirectJump: {
+      // First, check if this is an external call (jmp through IAT - tail call)
+      if (external_handler_) {
+        uint64_t mem_addr = ExtractIndirectCallMemoryAddress(last_instr.instr);
+        if (mem_addr != 0) {
+          auto *ext_config = external_handler_->GetConfigByIATAddress(mem_addr);
+          if (ext_config) {
+            utils::dbg() << "Detected external tail call to " << ext_config->name
+                         << " via IAT at " << llvm::format_hex(mem_addr, 0) << "\n";
+
+            // For tail call, we generate the external call but return instead of continuing
+            auto *ext_func = external_handler_->GetExternalFunction(ext_config->name);
+            if (ext_func) {
+              // Find STATE pointer
+              llvm::Value *state_ptr = nullptr;
+              for (auto &inst : block->getParent()->getEntryBlock()) {
+                if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+                  if (alloca->getName() == "STATE") {
+                    state_ptr = builder.CreateLoad(builder.getPtrTy(), alloca);
+                    break;
+                  }
+                }
+              }
+
+              if (state_ptr) {
+                // Load arguments from Win64 registers
+                static const char *arg_regs[] = {"RCX", "RDX", "R8", "R9"};
+                std::vector<llvm::Value *> args;
+                size_t num_args = std::min(ext_config->arg_types.size(), size_t(4));
+
+                for (size_t i = 0; i < num_args; ++i) {
+                  auto *reg = ctx_.GetRegister(arg_regs[i]);
+                  if (reg) {
+                    auto reg_ptr = reg->AddressOf(state_ptr, block);
+                    auto *reg_val = builder.CreateLoad(builder.getInt64Ty(), reg_ptr);
+                    if (ext_config->arg_types[i] == "ptr") {
+                      args.push_back(builder.CreateIntToPtr(reg_val, builder.getPtrTy()));
+                    } else if (ext_config->arg_types[i] == "i32") {
+                      args.push_back(builder.CreateTrunc(reg_val, builder.getInt32Ty()));
+                    } else {
+                      args.push_back(reg_val);
+                    }
+                  }
+                }
+
+                // Call external function
+                auto *result = builder.CreateCall(ext_func, args);
+
+                // Store result to RAX
+                auto *rax_reg = ctx_.GetRegister("RAX");
+                if (rax_reg) {
+                  auto rax_ptr = rax_reg->AddressOf(state_ptr, block);
+                  builder.CreateStore(result, rax_ptr);
+                }
+
+                // Tail call returns - load memory pointer from alloca
+                llvm::AllocaInst *memory_alloca = nullptr;
+                for (auto &inst : block->getParent()->getEntryBlock()) {
+                  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+                    if (alloca->getName() == "MEMORY") {
+                      memory_alloca = alloca;
+                      break;
+                    }
+                  }
+                }
+                if (memory_alloca) {
+                  auto *mem_ptr = builder.CreateLoad(builder.getPtrTy(), memory_alloca);
+                  builder.CreateRet(mem_ptr);
+                } else {
+                  builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+                }
+
+                utils::dbg() << "Generated external tail call to " << ext_config->name
+                             << " with " << args.size() << " args\n";
+                break;  // Exit the switch
+              }
+            }
+          }
+        }
+      }
+
+      // Not an external call - use regular dispatch
       llvm::Value *target_pc = remill::LoadProgramCounter(block, *intrinsics);
 
       if (target_pc) {
@@ -231,6 +434,23 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
 
     case remill::Instruction::kCategoryIndirectFunctionCall: {
       // Indirect function call: call *%rax or call *[mem]
+      // First, check if this is an external call (call through IAT)
+      if (external_handler_) {
+        uint64_t mem_addr = ExtractIndirectCallMemoryAddress(last_instr.instr);
+        if (mem_addr != 0) {
+          auto *ext_config = external_handler_->GetConfigByIATAddress(mem_addr);
+          if (ext_config) {
+            utils::dbg() << "Detected external call to " << ext_config->name
+                         << " via IAT at " << llvm::format_hex(mem_addr, 0) << "\n";
+            if (GenerateExternalCall(block, ext_config, next_addr, blocks,
+                                     block_owner, current_owner)) {
+              break;  // External call generated successfully
+            }
+          }
+        }
+      }
+
+      // Not an external call - use regular dispatch
       // The call semantics have already pushed the return address (next_addr) onto the stack
       // and set PC to the target. We need to dispatch to the target and handle returns.
       llvm::Value *target_pc = remill::LoadProgramCounter(block, *intrinsics);

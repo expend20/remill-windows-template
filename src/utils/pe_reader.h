@@ -50,6 +50,11 @@ struct COFFHeader {
     uint16_t Characteristics;
 };
 
+struct DataDirectory {
+    uint32_t VirtualAddress;
+    uint32_t Size;
+};
+
 struct OptionalHeader64 {
     uint16_t Magic;
     uint8_t MajorLinkerVersion;
@@ -80,6 +85,16 @@ struct OptionalHeader64 {
     uint64_t SizeOfHeapCommit;
     uint32_t LoaderFlags;
     uint32_t NumberOfRvaAndSizes;
+    DataDirectory DataDirectories[16];  // 16 entries in PE64
+};
+
+// Import table structures
+struct ImportDescriptor {
+    uint32_t OriginalFirstThunk;  // RVA to Import Lookup Table (ILT)
+    uint32_t TimeDateStamp;
+    uint32_t ForwarderChain;
+    uint32_t Name;                 // RVA to DLL name
+    uint32_t FirstThunk;           // RVA to Import Address Table (IAT)
 };
 
 struct SectionHeader {
@@ -101,6 +116,12 @@ constexpr uint16_t DOS_SIGNATURE = 0x5A4D;
 constexpr uint32_t PE_SIGNATURE = 0x00004550;
 constexpr uint16_t MACHINE_AMD64 = 0x8664;
 constexpr uint16_t PE32PLUS_MAGIC = 0x20B;
+
+// Data Directory indices
+constexpr uint32_t IMAGE_DIRECTORY_ENTRY_IMPORT = 1;
+
+// Import by ordinal flag for 64-bit
+constexpr uint64_t IMAGE_ORDINAL_FLAG64 = 0x8000000000000000ULL;
 
 struct TextSectionInfo {
     std::vector<uint8_t> bytes;
@@ -125,8 +146,18 @@ struct SectionInfo {
     bool IsExecutable() const { return characteristics & IMAGE_SCN_MEM_EXECUTE; }
 };
 
+// Represents an imported function
+struct ImportEntry {
+    std::string dll_name;
+    std::string function_name;
+    uint64_t iat_va;      // Absolute virtual address in IAT
+    uint16_t ordinal;     // Ordinal number (if imported by ordinal)
+    bool is_ordinal;      // True if imported by ordinal, false if by name
+};
+
 struct PEInfo {
     std::vector<SectionInfo> sections;
+    std::vector<ImportEntry> imports;
     uint64_t image_base;
     uint64_t entry_point_rva;
 
@@ -135,6 +166,12 @@ struct PEInfo {
     std::optional<uint8_t> ReadByte(uint64_t va) const;
     std::optional<uint32_t> ReadDword(uint64_t va) const;
     std::optional<uint64_t> ReadQword(uint64_t va) const;
+
+    // Find import by IAT address (returns nullptr if not found)
+    const ImportEntry* FindImportByIATAddress(uint64_t va) const;
+
+    // Read null-terminated string from virtual address
+    std::optional<std::string> ReadNullTerminatedString(uint64_t va) const;
 };
 
 std::optional<PEInfo> ReadPE(const std::string& filepath);

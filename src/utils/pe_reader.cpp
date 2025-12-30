@@ -109,6 +109,136 @@ ParsePE64TextSection(const std::vector<uint8_t> &pe_data) {
     return std::nullopt;
 }
 
+// Helper to read null-terminated string from PE data at given RVA
+std::optional<std::string> ReadStringAtRVA(const std::vector<uint8_t>& pe_data,
+                                           const std::vector<SectionInfo>& sections,
+                                           uint64_t image_base,
+                                           uint32_t rva) {
+    // Find section containing the RVA
+    for (const auto& sec : sections) {
+        if (rva >= sec.virtual_address && rva < sec.virtual_address + sec.size) {
+            uint64_t offset = rva - sec.virtual_address;
+            std::string result;
+            while (offset < sec.bytes.size()) {
+                char c = static_cast<char>(sec.bytes[offset]);
+                if (c == '\0') break;
+                result += c;
+                offset++;
+            }
+            return result;
+        }
+    }
+    return std::nullopt;
+}
+
+// Parse import table and populate imports vector
+void ParseImportTable(PEInfo& info, const std::vector<uint8_t>& pe_data,
+                      const OptionalHeader64* opt) {
+    // Check if import directory exists
+    if (opt->NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_IMPORT) {
+        return;  // No import directory
+    }
+
+    const auto& import_dir = opt->DataDirectories[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (import_dir.VirtualAddress == 0 || import_dir.Size == 0) {
+        return;  // No imports
+    }
+
+    uint32_t import_rva = import_dir.VirtualAddress;
+
+    // Find section containing import descriptors
+    const SectionInfo* import_section = nullptr;
+    for (const auto& sec : info.sections) {
+        if (import_rva >= sec.virtual_address &&
+            import_rva < sec.virtual_address + sec.size) {
+            import_section = &sec;
+            break;
+        }
+    }
+
+    if (!import_section) {
+        return;  // Import directory not in any loaded section
+    }
+
+    // Iterate through import descriptors
+    uint64_t desc_offset = import_rva - import_section->virtual_address;
+    while (desc_offset + sizeof(ImportDescriptor) <= import_section->bytes.size()) {
+        ImportDescriptor desc;
+        std::memcpy(&desc, import_section->bytes.data() + desc_offset, sizeof(desc));
+
+        // Check for null terminator (all zeros)
+        if (desc.OriginalFirstThunk == 0 && desc.FirstThunk == 0 && desc.Name == 0) {
+            break;
+        }
+
+        // Read DLL name
+        auto dll_name = ReadStringAtRVA(pe_data, info.sections, info.image_base, desc.Name);
+        if (!dll_name) {
+            desc_offset += sizeof(ImportDescriptor);
+            continue;
+        }
+
+        // Use OriginalFirstThunk (ILT) if available, otherwise FirstThunk (IAT)
+        uint32_t thunk_rva = desc.OriginalFirstThunk ? desc.OriginalFirstThunk : desc.FirstThunk;
+        uint32_t iat_rva = desc.FirstThunk;
+
+        // Find section containing thunks
+        const SectionInfo* thunk_section = nullptr;
+        for (const auto& sec : info.sections) {
+            if (thunk_rva >= sec.virtual_address &&
+                thunk_rva < sec.virtual_address + sec.size) {
+                thunk_section = &sec;
+                break;
+            }
+        }
+
+        if (!thunk_section) {
+            desc_offset += sizeof(ImportDescriptor);
+            continue;
+        }
+
+        // Iterate through thunk entries (64-bit pointers)
+        uint64_t thunk_offset = thunk_rva - thunk_section->virtual_address;
+        uint32_t iat_entry_rva = iat_rva;
+
+        while (thunk_offset + 8 <= thunk_section->bytes.size()) {
+            uint64_t thunk_value;
+            std::memcpy(&thunk_value, thunk_section->bytes.data() + thunk_offset, 8);
+
+            if (thunk_value == 0) {
+                break;  // End of thunk array
+            }
+
+            ImportEntry entry;
+            entry.dll_name = *dll_name;
+            entry.iat_va = info.image_base + iat_entry_rva;
+
+            if (thunk_value & IMAGE_ORDINAL_FLAG64) {
+                // Import by ordinal
+                entry.is_ordinal = true;
+                entry.ordinal = static_cast<uint16_t>(thunk_value & 0xFFFF);
+                entry.function_name = "";
+            } else {
+                // Import by name - thunk_value is RVA to IMAGE_IMPORT_BY_NAME
+                entry.is_ordinal = false;
+                entry.ordinal = 0;
+                uint32_t name_rva = static_cast<uint32_t>(thunk_value);
+                // Skip 2-byte hint and read name
+                auto func_name = ReadStringAtRVA(pe_data, info.sections, info.image_base,
+                                                  name_rva + 2);
+                entry.function_name = func_name.value_or("");
+            }
+
+            info.imports.push_back(std::move(entry));
+
+            thunk_offset += 8;
+            iat_entry_rva += 8;
+        }
+
+        desc_offset += sizeof(ImportDescriptor);
+    }
+}
+
 std::optional<PEInfo> ParsePE64(const std::vector<uint8_t> &pe_data) {
     if (pe_data.size() < sizeof(DOSHeader)) {
         std::cerr << "PE data too small for DOS header\n";
@@ -196,6 +326,9 @@ std::optional<PEInfo> ParsePE64(const std::vector<uint8_t> &pe_data) {
         info.sections.push_back(std::move(sec_info));
     }
 
+    // Parse import table
+    ParseImportTable(info, pe_data, opt);
+
     return info;
 }
 
@@ -263,6 +396,31 @@ std::optional<uint64_t> PEInfo::ReadQword(uint64_t va) const {
     uint64_t value;
     std::memcpy(&value, sec->bytes.data() + offset, sizeof(value));
     return value;
+}
+
+const ImportEntry* PEInfo::FindImportByIATAddress(uint64_t va) const {
+    for (const auto& import : imports) {
+        if (import.iat_va == va) {
+            return &import;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<std::string> PEInfo::ReadNullTerminatedString(uint64_t va) const {
+    const auto* sec = FindSectionContaining(va);
+    if (!sec) {
+        return std::nullopt;
+    }
+    uint64_t offset = (va - image_base) - sec->virtual_address;
+    std::string result;
+    while (offset < sec->bytes.size()) {
+        char c = static_cast<char>(sec->bytes[offset]);
+        if (c == '\0') break;
+        result += c;
+        offset++;
+    }
+    return result;
 }
 
 std::optional<PEInfo> ReadPE(const std::string& filepath) {

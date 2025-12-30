@@ -5,6 +5,8 @@
 
 #include <llvm/IR/IRBuilder.h>
 
+#include "variable_config.h"
+
 namespace lifting {
 
 WrapperBuilder::WrapperBuilder(LiftingContext &ctx) : ctx_(ctx) {}

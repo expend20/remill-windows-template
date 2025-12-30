@@ -228,25 +228,6 @@ static bool IsValidSectionAddress(uint64_t va, const MemoryBackingInfo &mem_info
   return false;
 }
 
-// Create a load with proper type handling (including float types)
-static llvm::Value* CreateTypedLoad(llvm::IRBuilder<> &ir, llvm::Value *ptr,
-                                     llvm::Type *result_type, const char *name) {
-  // For float types, we need to load through a properly typed pointer
-  if (result_type->isFloatTy() || result_type->isDoubleTy() ||
-      result_type->isX86_FP80Ty()) {
-    // Create a load of the float type directly - LLVM's opaque pointers handle this
-    return ir.CreateLoad(result_type, ptr, name);
-  }
-  return ir.CreateLoad(result_type, ptr, name);
-}
-
-// Create a store with proper type handling (including float types)
-static void CreateTypedStore(llvm::IRBuilder<> &ir, llvm::Value *value,
-                              llvm::Value *ptr) {
-  // For float types, store directly - LLVM's opaque pointers handle this
-  ir.CreateStore(value, ptr);
-}
-
 std::pair<llvm::GlobalVariable *, uint64_t>
 MemoryBackingInfo::FindGlobalForAddress(uint64_t va) const {
   for (const auto &mapping : sections) {
@@ -453,7 +434,6 @@ void LowerMemoryIntrinsics(llvm::Module *module,
     auto *callee = call->getCalledFunction();
     bool is_read = read_intrinsics.count(callee) > 0;
     bool is_float_read = read_float_intrinsics.count(callee) > 0;
-    bool is_float_write = write_float_intrinsics.count(callee) > 0;
     bool is_64bit_read = (callee == read_64);
     bool is_64bit_write = (callee == write_64);
 
