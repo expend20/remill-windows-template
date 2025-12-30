@@ -362,6 +362,15 @@ else()
         WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
     )
 
+    add_external_call_test(
+        NAME external_puts_stack
+        CPP ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_stack.cpp
+        CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_stack.config.json
+        ENTRY test_proc
+        EXPECTED_EXIT_CODE 4919
+        WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
+    )
+
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
 

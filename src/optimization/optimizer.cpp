@@ -379,4 +379,36 @@ void RemoveFlagComputationIntrinsics(llvm::Module *module) {
   }
 }
 
+void PropagateConstants(llvm::Module *module) {
+  // Run SCCP and basic simplification
+  // This propagates constant values while keeping stores that feed into
+  // external call arguments alive
+  llvm::LoopAnalysisManager lam;
+  llvm::FunctionAnalysisManager fam;
+  llvm::CGSCCAnalysisManager cgam;
+  llvm::ModuleAnalysisManager mam;
+
+  llvm::PassBuilder pb;
+  pb.registerModuleAnalyses(mam);
+  pb.registerCGSCCAnalyses(cgam);
+  pb.registerFunctionAnalyses(fam);
+  pb.registerLoopAnalyses(lam);
+  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  llvm::FunctionPassManager fpm;
+
+  // SCCP: Sparse conditional constant propagation
+  fpm.addPass(llvm::SCCPPass());
+
+  // InstCombine: Fold constant expressions
+  fpm.addPass(llvm::InstCombinePass());
+
+  // SimplifyCFG: Clean up unreachable blocks
+  fpm.addPass(llvm::SimplifyCFGPass());
+
+  llvm::ModulePassManager mpm;
+  mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+  mpm.run(*module, mam);
+}
+
 }  // namespace optimization

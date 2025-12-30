@@ -238,9 +238,22 @@ int main(int argc, char **argv) {
   auto stack_info = lifting::CreateStackAlloca(
       wrapper, lifting::INITIAL_RSP, lifting::STACK_SIZE);
 
+  // Pass stack info to external handler for stack pointer resolution
+  external_handler.SetStackInfo(lifting::INITIAL_RSP, lifting::STACK_SIZE);
+
   // Lower memory intrinsics
   lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info,
                                  &stack_info, wrapper);
+
+  // Resolve pointer data in external call arguments (if enabled)
+  // This must happen BEFORE extraction to connect inttoptr constants
+  // with the stack alloca so DCE doesn't eliminate the stores.
+  if (config->resolve_pointer_data) {
+    size_t resolved = external_handler.ResolveConstantPointers(ctx.GetSemanticsModule());
+    if (resolved > 0) {
+      std::cout << "Resolved " << resolved << " pointer argument(s)\n";
+    }
+  }
 
   // Extract to clean module for optimization
   // Include external function declarations if present
@@ -256,15 +269,6 @@ int main(int argc, char **argv) {
 
   // Run aggressive optimization
   optimization::OptimizeAggressive(opt_module.get());
-
-  // Resolve pointer data in external call arguments (if enabled)
-  // This must happen after optimization when constant values are known
-  if (config->resolve_pointer_data) {
-    size_t resolved = external_handler.ResolveConstantPointers(opt_module.get());
-    if (resolved > 0) {
-      std::cout << "Resolved " << resolved << " pointer argument(s) to globals\n";
-    }
-  }
 
   // Write the optimized module
   utils::WriteModule(opt_module.get(), "test_optimized");

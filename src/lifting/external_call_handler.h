@@ -22,6 +22,12 @@ public:
     // Set PE info for pointer resolution (call before CreateDeclarations)
     void SetPEInfo(const utils::PEInfo* pe_info) { pe_info_ = pe_info; }
 
+    // Set stack info for stack pointer resolution
+    void SetStackInfo(uint64_t stack_top_va, uint64_t stack_size) {
+        stack_top_va_ = stack_top_va;
+        stack_size_ = stack_size;
+    }
+
     // Enable/disable pointer data resolution
     void SetResolvePointerData(bool resolve) { resolve_pointer_data_ = resolve; }
 
@@ -34,20 +40,8 @@ public:
     // Get external function declaration by name (nullptr if not found)
     llvm::Function* GetExternalFunction(const std::string& name) const;
 
-    // Check if an IAT address corresponds to an external call
-    bool IsExternalCall(uint64_t iat_address) const;
-
     // Get the config for an external call by IAT address
     const ExternalCallConfig* GetConfigByIATAddress(uint64_t iat_address) const;
-
-    // Get argument count for external function
-    size_t GetArgCount(const std::string& name) const;
-
-    // Resolve a pointer address to an LLVM value
-    // If the address points to data in a known PE section and resolution is enabled,
-    // creates an LLVM global constant and returns a pointer to it.
-    // Otherwise returns nullptr (caller should use inttoptr).
-    llvm::Value* ResolvePointerArgument(uint64_t address, llvm::IRBuilder<>& builder);
 
     // Post-optimization pass: resolve inttoptr constants in external call arguments
     // to LLVM globals. This should be called after SCCP has propagated constant values.
@@ -61,6 +55,10 @@ private:
     // PE info for pointer resolution
     const utils::PEInfo* pe_info_ = nullptr;
     bool resolve_pointer_data_ = false;
+
+    // Stack info for stack pointer resolution
+    uint64_t stack_top_va_ = 0;
+    uint64_t stack_size_ = 0;
 
     // Cache of resolved pointer globals (address -> global)
     std::map<uint64_t, llvm::GlobalVariable*> resolved_globals_;
@@ -77,6 +75,13 @@ private:
 
     // Find section containing the given address
     const utils::SectionInfo* FindSectionForAddress(uint64_t address) const;
+
+    // Check if address is in stack range and return offset from stack base
+    // Returns {true, offset} if in range, {false, 0} otherwise
+    std::pair<bool, uint64_t> FindStackOffset(uint64_t address) const;
+
+    // Find the stack alloca in a function (looks for alloca named "stack")
+    llvm::AllocaInst* FindStackAlloca(llvm::Function* func) const;
 };
 
 }  // namespace lifting

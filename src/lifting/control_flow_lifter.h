@@ -20,8 +20,9 @@
 
 namespace lifting {
 
-// Forward declaration
+// Forward declarations
 class ExternalCallHandler;
+struct ExternalCallConfig;
 
 // Information about a decoded instruction
 struct DecodedInstruction {
@@ -198,6 +199,23 @@ class ControlFlowLifter {
 
   // External call handler for detecting and generating external calls
   ExternalCallHandler *external_handler_ = nullptr;
+
+  // Call targets that contain only an indirect jump to external function (external-only helpers)
+  // Maps: helper address -> ExternalCallConfig* for the external function
+  std::map<uint64_t, const ExternalCallConfig *> external_only_helper_configs_;
+
+  // Identify call targets that only contain an indirect jump to an external function
+  // Must be called after block discovery (when instructions_ and call_targets_ are populated)
+  void IdentifyExternalOnlyHelpers();
+
+  // Generate an external call directly without remill lifting
+  // This avoids the return address push that normal CALL semantics perform
+  // is_tail_call: if true, return after the call instead of branching to next_addr
+  void GenerateExternalCallDirect(llvm::BasicBlock *block,
+                                  const ExternalCallConfig *config,
+                                  uint64_t next_addr,
+                                  uint64_t block_addr,
+                                  bool is_tail_call = false);
 };
 
 }  // namespace lifting

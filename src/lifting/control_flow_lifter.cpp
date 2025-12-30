@@ -47,6 +47,7 @@ void ControlFlowLifter::ClearState() {
   call_return_addrs_.clear();
   main_func_ = nullptr;
   dispatch_blocks_.clear();
+  external_only_helper_configs_.clear();
 
   // Reset iteration state
   iter_state_.lifted_blocks.clear();
@@ -185,7 +186,7 @@ void ControlFlowLifter::CreateBasicBlocksIncremental() {
 }
 
 bool ControlFlowLifter::LiftPendingBlocks() {
-  BlockTerminator terminator(ctx_, external_handler_);
+  BlockTerminator terminator(ctx_);
 
   for (uint64_t block_addr : block_starts_) {
     if (iter_state_.lifted_blocks.count(block_addr)) {
@@ -222,6 +223,48 @@ bool ControlFlowLifter::LiftPendingBlocks() {
 
       auto &decoded = instr_it->second;
       last_instr = &decoded;
+
+      // Check for external indirect call/jump BEFORE lifting to avoid dead return address store
+      // This covers both:
+      // - kCategoryIndirectFunctionCall: call qword ptr [IAT_addr]
+      // - kCategoryIndirectJump: jmp qword ptr [IAT_addr] (tail call)
+      if ((decoded.instr.category == remill::Instruction::kCategoryIndirectFunctionCall ||
+           decoded.instr.category == remill::Instruction::kCategoryIndirectJump) &&
+          external_handler_) {
+        uint64_t mem_addr = BlockTerminator::ExtractIndirectCallMemoryAddress(decoded.instr);
+        if (mem_addr != 0) {
+          auto *ext_config = external_handler_->GetConfigByIATAddress(mem_addr);
+          if (ext_config) {
+            // Generate external call WITHOUT lifting (no return address push)
+            uint64_t next_addr = addr + decoded.size;
+            bool is_tail_call = (decoded.instr.category == remill::Instruction::kCategoryIndirectJump);
+            GenerateExternalCallDirect(block, ext_config, next_addr, block_addr, is_tail_call);
+            // Clear last_instr so FinishBlock isn't called (we already terminated the block)
+            last_instr = nullptr;
+            // Mark block as lifted and continue to next block
+            break;
+          }
+        }
+      }
+
+      // Check for direct function call to an external-only helper BEFORE lifting
+      // This handles: call helper_addr where helper only contains jmp [IAT_addr]
+      // Without this, remill's CALL semantics would push return address creating dead store
+      if (decoded.instr.category == remill::Instruction::kCategoryDirectFunctionCall) {
+        uint64_t target = decoded.instr.branch_taken_pc;
+        auto ext_it = external_only_helper_configs_.find(target);
+        if (ext_it != external_only_helper_configs_.end()) {
+          // Generate external call WITHOUT lifting (no return address push)
+          uint64_t next_addr = addr + decoded.size;
+          GenerateExternalCallDirect(block, ext_it->second, next_addr, block_addr, false);
+          // Clear last_instr so FinishBlock isn't called (we already terminated the block)
+          last_instr = nullptr;
+          utils::dbg() << "Handled direct call to external-only helper at 0x"
+                       << llvm::format_hex(target, 0) << " -> " << ext_it->second->name << "\n";
+          // Mark block as lifted and continue to next block
+          break;
+        }
+      }
 
       auto lifter = decoded.instr.GetLifter();
       auto status = lifter->LiftIntoBlock(decoded.instr, block);
@@ -264,6 +307,153 @@ std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
       iter_state_.lifted_blocks, find_block_end, get_block_owner);
 }
 
+void ControlFlowLifter::IdentifyExternalOnlyHelpers() {
+  if (!external_handler_) {
+    return;
+  }
+
+  // Check each call target to see if it's an external-only helper
+  // An external-only helper is a block that contains only a single indirect jump to IAT
+  for (uint64_t helper_addr : call_targets_) {
+    // Find the first instruction at this address
+    auto instr_it = instructions_.find(helper_addr);
+    if (instr_it == instructions_.end()) {
+      continue;
+    }
+
+    const auto &decoded = instr_it->second;
+
+    // Check if this is an indirect jump (jmp qword ptr [addr])
+    if (decoded.instr.category != remill::Instruction::kCategoryIndirectJump) {
+      continue;
+    }
+
+    // Extract the memory address from the indirect jump
+    uint64_t mem_addr = BlockTerminator::ExtractIndirectCallMemoryAddress(decoded.instr);
+    if (mem_addr == 0) {
+      continue;
+    }
+
+    // Check if this address is in the IAT (external function)
+    auto *ext_config = external_handler_->GetConfigByIATAddress(mem_addr);
+    if (ext_config) {
+      external_only_helper_configs_[helper_addr] = ext_config;
+      utils::dbg() << "Identified external-only helper at 0x"
+                   << llvm::format_hex(helper_addr, 0)
+                   << " -> " << ext_config->name << "\n";
+    }
+  }
+
+  utils::dbg() << "Found " << external_only_helper_configs_.size()
+               << " external-only helpers\n";
+}
+
+void ControlFlowLifter::GenerateExternalCallDirect(
+    llvm::BasicBlock *block,
+    const ExternalCallConfig *config,
+    uint64_t next_addr,
+    uint64_t block_addr,
+    bool is_tail_call) {
+
+  llvm::IRBuilder<> builder(block);
+  auto *intrinsics = ctx_.GetIntrinsics();
+
+  // Get the external function
+  auto *ext_func = external_handler_->GetExternalFunction(config->name);
+  if (!ext_func) {
+    utils::dbg() << "External function not found: " << config->name << "\n";
+    return;
+  }
+
+  // Find STATE pointer in entry block
+  llvm::Value *state_ptr = nullptr;
+  for (auto &inst : block->getParent()->getEntryBlock()) {
+    if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+      if (alloca->getName() == "STATE") {
+        state_ptr = builder.CreateLoad(builder.getPtrTy(), alloca);
+        break;
+      }
+    }
+  }
+
+  if (!state_ptr) {
+    utils::dbg() << "STATE pointer not found for external call\n";
+    return;
+  }
+
+  // NOTE: Unlike GenerateExternalCall in BlockTerminator, we do NOT need to
+  // undo RSP here because we skipped lifting the CALL instruction entirely.
+  // No return address was pushed, so no dead store to worry about.
+
+  // Load arguments from State registers (Win64: RCX, RDX, R8, R9)
+  std::vector<llvm::Value *> args;
+  static const char *arg_regs[] = {"RCX", "RDX", "R8", "R9"};
+  size_t num_args = std::min(config->arg_types.size(), size_t(4));
+
+  for (size_t i = 0; i < num_args; ++i) {
+    auto *reg = ctx_.GetRegister(arg_regs[i]);
+    if (!reg) {
+      utils::dbg() << "Register " << arg_regs[i] << " not found\n";
+      continue;
+    }
+
+    // Get the register value from State
+    auto reg_ptr = reg->AddressOf(state_ptr, block);
+    auto *reg_val = builder.CreateLoad(builder.getInt64Ty(), reg_ptr);
+
+    // Convert to the expected type
+    const std::string &arg_type = config->arg_types[i];
+    if (arg_type == "ptr") {
+      args.push_back(builder.CreateIntToPtr(reg_val, builder.getPtrTy()));
+    } else if (arg_type == "i32") {
+      args.push_back(builder.CreateTrunc(reg_val, builder.getInt32Ty()));
+    } else {
+      args.push_back(reg_val);
+    }
+  }
+
+  // Create the call
+  auto *result = builder.CreateCall(ext_func, args);
+
+  // Store result to RAX
+  auto *rax_reg = ctx_.GetRegister("RAX");
+  if (rax_reg) {
+    auto rax_ptr = rax_reg->AddressOf(state_ptr, block);
+    builder.CreateStore(result, rax_ptr);
+  }
+
+  // Get current block owner
+  uint64_t current_owner = 0;
+  auto owner_it = block_owner_.find(block_addr);
+  if (owner_it != block_owner_.end()) {
+    current_owner = owner_it->second;
+  }
+
+  // Helper to check if a target block is in the same function
+  auto sameFunction = [this, current_owner](uint64_t target_addr) -> bool {
+    if (!blocks_.count(target_addr)) return false;
+    auto it = block_owner_.find(target_addr);
+    uint64_t target_owner = (it != block_owner_.end()) ? it->second : 0;
+    return target_owner == current_owner;
+  };
+
+  // Continue to next block or return
+  // For tail calls (jmp [IAT]), always return after the call
+  if (is_tail_call) {
+    builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+    utils::dbg() << "Generated direct external tail call to " << config->name
+                 << " with " << args.size() << " args (no JMP semantics)\n";
+  } else if (sameFunction(next_addr)) {
+    builder.CreateBr(blocks_.at(next_addr));
+    utils::dbg() << "Generated direct external call to " << config->name
+                 << " with " << args.size() << " args (no CALL semantics)\n";
+  } else {
+    builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+    utils::dbg() << "Generated direct external call to " << config->name
+                 << " with " << args.size() << " args (no CALL semantics, returning)\n";
+  }
+}
+
 bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
                                       const uint8_t *bytes, size_t size,
                                       llvm::Function *func) {
@@ -300,6 +490,9 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
 
     utils::dbg() << "Discovered " << block_starts_.size()
                  << " total blocks so far\n";
+
+    // Phase 1b: Identify external-only helpers (call targets that only contain jmp [IAT])
+    IdentifyExternalOnlyHelpers();
 
     // Phase 2: Assign blocks to functions
     FunctionSplitter::AssignBlocksToFunctions(
@@ -531,7 +724,7 @@ void ControlFlowLifter::CreateBasicBlocks(llvm::Function *func) {
 
 bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
                                     uint64_t code_base) {
-  BlockTerminator terminator(ctx_, external_handler_);
+  BlockTerminator terminator(ctx_);
 
   for (auto it = block_starts_.begin(); it != block_starts_.end(); ++it) {
     uint64_t block_addr = *it;
@@ -590,7 +783,7 @@ llvm::SwitchInst *ControlFlowLifter::FinishBlock(llvm::BasicBlock *block,
                                                   const DecodedInstruction &last_instr,
                                                   uint64_t next_addr,
                                                   uint64_t block_addr) {
-  BlockTerminator terminator(ctx_, external_handler_);
+  BlockTerminator terminator(ctx_);
   return terminator.FinishBlock(block, last_instr, next_addr, block_addr,
                                 blocks_, block_owner_, helper_functions_,
                                 iter_state_, dispatch_blocks_);

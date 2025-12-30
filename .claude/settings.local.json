@@ -33,7 +33,11 @@
       "Bash(./build/ir_checker.exe:*)",
       "Bash(../../../../../../dependencies/install/bin/opt.exe:*)",
       "Bash(git log:*)",
-      "Bash(E:/temp/remill-windows-template/build/external_call_lifter.exe shellcode.exe E:/temp/remill-windows-template/src/tests/external_call/puts_test.config.json --debug)"
+      "Bash(E:/temp/remill-windows-template/build/external_call_lifter.exe shellcode.exe E:/temp/remill-windows-template/src/tests/external_call/puts_test.config.json --debug)",
+      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_stack.config.json)",
+      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_stack.config.json --debug)",
+      "Bash(./test.exe:*)",
+      "Bash(E:/temp/remill-windows-template/build/tests/variable/external_puts_stack/relifted.exe)"
     ]
   }
 }
