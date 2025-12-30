@@ -43,6 +43,7 @@ target_link_libraries(lifting_common PUBLIC
 find_program(CLANG_EXECUTABLE clang HINTS "${LLVM_TOOLS_BINARY_DIR}")
 find_program(CLANG_CL_EXECUTABLE clang-cl HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
 find_program(LLVM_OPT_EXECUTABLE opt HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
+find_program(LLC_EXECUTABLE llc HINTS "${LLVM_TOOLS_BINARY_DIR}" "${CMAKE_PREFIX_PATH}/bin")
 find_program(ML64_EXECUTABLE ml64)
 if(ML64_EXECUTABLE)
     get_filename_component(ML64_DIR "${ML64_EXECUTABLE}" DIRECTORY)
@@ -66,6 +67,7 @@ else()
     enable_testing()
     include(add_asm_lifting_test)
     include(add_cpp_lifting_test)
+    include(add_variable_test)
 
     # Shared lifter executable for all tests
     add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/ret_with_code/main.cpp)
@@ -75,6 +77,10 @@ else()
     add_executable(ir_checker ${CMAKE_SOURCE_DIR}/src/tools/ir_checker.cpp)
     target_include_directories(ir_checker PRIVATE ${CMAKE_PREFIX_PATH}/include)
     target_link_libraries(ir_checker PRIVATE LLVM-Wrapper)
+
+    # Variable lifter executable for tests with variable (non-constant) inputs
+    add_executable(variable_lifter ${CMAKE_SOURCE_DIR}/src/tests/variable/main.cpp)
+    target_link_libraries(variable_lifter PRIVATE lifting_common)
 
     # Pluto obfuscation passes (static library) and obfuscator tool
     # This replaces the llvm-ob-passes plugin approach to avoid ODR violations
@@ -327,6 +333,20 @@ else()
         ENTRY indirect_call_indexed_offset
         EXPECTED_EXIT_CODE 4919
     )
+
+    # Variable input tests (non-constant register values)
+    if(LLC_EXECUTABLE)
+        message(STATUS "Found llc: ${LLC_EXECUTABLE}")
+        add_variable_test(
+            NAME variable_add_const
+            ASM ${CMAKE_SOURCE_DIR}/src/tests/variable/add_const.asm
+            CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/add_const.config.json
+            ENTRY test_proc
+            TESTS "0:4919|100:5019|1000:5919"
+        )
+    else()
+        message(STATUS "llc not found, variable tests will not be available")
+    endif()
 
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")

@@ -1,0 +1,4 @@
+{
+  "variables": ["rcx"],
+  "return_register": "rax"
+}

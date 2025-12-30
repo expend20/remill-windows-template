@@ -111,3 +111,12 @@ Have a look at POINTER_ANALYSIS.md and xtea_noinline.cpp test. Research what pre
 ---
 
 There's an optimization folding issue with xtea_substitution test, final test_optimized.ll should contain only ret i32 4919, but there's something which prevents optimization/folding. At the same time not obfuscated variants xtea_roundtrip and xtea_noinline work well and obfuscated global_var_pluto too. Please investigate.
+
+---
+
+Up until now all the deobfuscation/lifting/optimization happened on the assumption that everything is a constant
+(@src\tests\ret_with_code\). I need a new feature that would describe external/unknown variables. E.g. let's write .asm test with "mov
+rax, rcx; add rax, 0x1337; ret". I need to describe somehow when lifting this particular test (create a new directory btw,
+src/tests/variable) that rcx is not a constant but a unknown variable that can't be optimized away or folded. I need the similar testing
+ environment as for existing .asm files, but there should be no .ll file checker, instead there sould be a run test where the lifted
+code is executed with initialized variable and the result is checked against valid result. Note that not only register can be unknown but other things: specific memory address or a function call (in case of a function it's parameters and resulting value should be described too and can't be folded).
