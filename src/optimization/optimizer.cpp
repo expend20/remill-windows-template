@@ -1,6 +1,13 @@
 #include "optimizer.h"
 #include "stack_slot_splitter.h"
 
+#include <algorithm>
+#include <climits>
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <set>
+
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -183,6 +190,9 @@ static void runO3Pipeline(llvm::Module *module) {
   mpm.run(*module, mam);
 }
 
+// Forward declaration
+void CleanupDeadStackStores(llvm::Module *module);
+
 void OptimizeAggressive(llvm::Module *module) {
   // Aggressive optimization pipeline for deobfuscation.
   // Structure: SSA promotion -> 2x O3 -> force unroll -> O3 -> cleanup
@@ -249,6 +259,346 @@ void OptimizeAggressive(llvm::Module *module) {
   // Phase 5: Third O3 - unrolls with forced metadata and constant folds
   runO3Pipeline(module);
 
+  // Phase 6: Clean up dead stores that DSE missed
+  // DSE can't eliminate stores to stack alloca when external calls like puts
+  // have memory(argmem: read) - it doesn't know how many bytes they read.
+  // We clean up stores that are clearly xorstr bookkeeping (storing stack addresses
+  // or XOR key data that's not part of the actual string).
+  CleanupDeadStackStores(module);
+}
+
+// Describes how a function reads from a pointer argument
+enum class ReadSemantics {
+  NullTerminated,  // Read until null byte (puts, printf, strlen, etc.)
+  SizedBuffer,     // Read N bytes from size argument
+  Unknown          // Unknown - be conservative, keep all stores forward
+};
+
+struct FunctionReadInfo {
+  ReadSemantics semantics;
+  unsigned ptr_arg_index;    // Which argument is the pointer
+  unsigned size_arg_index;   // Which argument is the size (for SizedBuffer)
+  unsigned size_arg_index2;  // Second size arg for fwrite (size * nmemb), -1 if unused
+};
+
+// Get read semantics for known functions
+static std::optional<FunctionReadInfo> getFunctionReadInfo(llvm::StringRef name, unsigned arg_index) {
+  // Null-terminated string functions (read until null)
+  static const std::set<std::string> null_term_funcs = {
+    "puts", "printf", "sprintf", "snprintf", "fprintf",
+    "strlen", "strcpy", "strncpy", "strcat", "strncat",
+    "strcmp", "strncmp", "strchr", "strrchr", "strstr",
+    "atoi", "atol", "atoll", "atof", "strtol", "strtoll", "strtod",
+    "fputs", "puts_s", "printf_s", "wprintf",
+    // Windows variants
+    "_putws", "wprintf", "fputws"
+  };
+
+  // Sized buffer functions: {ptr_arg, size_arg, size_arg2 (-1 if none)}
+  struct SizedInfo { unsigned ptr_arg; unsigned size_arg; unsigned size_arg2; };
+  static const std::map<std::string, SizedInfo> sized_funcs = {
+    {"memcpy",   {1, 2, UINT_MAX}},  // memcpy(dst, src, n) - src is arg 1
+    {"memmove",  {1, 2, UINT_MAX}},  // memmove(dst, src, n)
+    {"memcmp",   {0, 2, UINT_MAX}},  // memcmp(s1, s2, n) - both args read
+    {"memchr",   {0, 2, UINT_MAX}},  // memchr(s, c, n)
+    {"write",    {1, 2, UINT_MAX}},  // write(fd, buf, n)
+    {"_write",   {1, 2, UINT_MAX}},  // Windows _write
+    {"fwrite",   {0, 1, 2}},         // fwrite(ptr, size, nmemb, stream) - size*nmemb
+    {"send",     {1, 2, UINT_MAX}},  // send(sock, buf, len, flags)
+    {"sendto",   {1, 2, UINT_MAX}},  // sendto(sock, buf, len, ...)
+  };
+
+  std::string func_name = name.str();
+
+  // Check null-terminated functions
+  if (null_term_funcs.count(func_name)) {
+    // For most string functions, arg 0 is the string
+    // Special cases handled below
+    unsigned expected_ptr_arg = 0;
+
+    // printf family: format string is arg 0
+    // strcpy/strcat: src is arg 1
+    if (func_name == "strcpy" || func_name == "strncpy" ||
+        func_name == "strcat" || func_name == "strncat") {
+      expected_ptr_arg = 1;  // src argument
+    }
+
+    if (arg_index == expected_ptr_arg) {
+      return FunctionReadInfo{ReadSemantics::NullTerminated, expected_ptr_arg, 0, UINT_MAX};
+    }
+    // Also mark arg 0 as null-terminated for strcmp (both args are strings)
+    if ((func_name == "strcmp" || func_name == "strncmp") && arg_index <= 1) {
+      return FunctionReadInfo{ReadSemantics::NullTerminated, arg_index, 0, UINT_MAX};
+    }
+  }
+
+  // Check sized buffer functions
+  auto it = sized_funcs.find(func_name);
+  if (it != sized_funcs.end()) {
+    const auto& info = it->second;
+    if (arg_index == info.ptr_arg) {
+      return FunctionReadInfo{ReadSemantics::SizedBuffer, info.ptr_arg, info.size_arg, info.size_arg2};
+    }
+    // memcmp reads from both args
+    if (func_name == "memcmp" && arg_index == 1) {
+      return FunctionReadInfo{ReadSemantics::SizedBuffer, 1, 2, UINT_MAX};
+    }
+  }
+
+  // Unknown function - return unknown semantics
+  return FunctionReadInfo{ReadSemantics::Unknown, arg_index, 0, UINT_MAX};
+}
+
+void CleanupDeadStackStores(llvm::Module *module) {
+  // Generic dead store elimination for stack allocas.
+  // DSE can't eliminate stores when external calls have memory(argmem: read)
+  // because it doesn't know how many bytes they read.
+  //
+  // Our approach:
+  // 1. For null-terminated string functions (puts, printf): scan for null terminator
+  // 2. For sized buffer functions (memcpy, write): use size argument
+  // 3. For unknown functions: keep all stores from pointer offset forward (conservative)
+
+  for (auto &F : *module) {
+    if (F.isDeclaration()) continue;
+
+    // Find the stack alloca
+    llvm::AllocaInst *stack_alloca = nullptr;
+    for (auto &I : F.getEntryBlock()) {
+      if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+        if (alloca->getName() == "__stack_local") {
+          stack_alloca = alloca;
+          break;
+        }
+      }
+    }
+    if (!stack_alloca) continue;
+
+    auto &DL = module->getDataLayout();
+
+    // Collect info about each pointer argument to external calls
+    struct LiveRange {
+      int64_t start;
+      int64_t end;        // -1 means "until null terminator"
+      bool scan_for_null; // If true, scan for null; if false, use fixed end
+    };
+    std::vector<LiveRange> live_ranges;
+
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        auto *call = llvm::dyn_cast<llvm::CallInst>(&I);
+        if (!call) continue;
+
+        auto *callee = call->getCalledFunction();
+        llvm::StringRef func_name = callee ? callee->getName() : "";
+
+        // Check each argument
+        for (unsigned i = 0; i < call->arg_size(); ++i) {
+          auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(call->getArgOperand(i));
+          if (!gep || gep->getPointerOperand() != stack_alloca) continue;
+
+          // Get the constant offset
+          llvm::APInt offset_ap(64, 0);
+          if (!gep->accumulateConstantOffset(DL, offset_ap)) continue;
+          int64_t offset = offset_ap.getSExtValue();
+
+          // Get function semantics
+          auto info = getFunctionReadInfo(func_name, i);
+          if (!info) continue;
+
+          switch (info->semantics) {
+            case ReadSemantics::NullTerminated:
+              live_ranges.push_back({offset, -1, true});
+              break;
+
+            case ReadSemantics::SizedBuffer: {
+              // Try to get size from the size argument
+              int64_t size = -1;
+              if (info->size_arg_index < call->arg_size()) {
+                if (auto *ci = llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(info->size_arg_index))) {
+                  size = ci->getSExtValue();
+                  // Handle fwrite(ptr, size, nmemb, stream) - multiply size * nmemb
+                  if (info->size_arg_index2 != UINT_MAX && info->size_arg_index2 < call->arg_size()) {
+                    if (auto *ci2 = llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(info->size_arg_index2))) {
+                      size *= ci2->getSExtValue();
+                    } else {
+                      size = -1;  // Non-constant, be conservative
+                    }
+                  }
+                }
+              }
+              if (size > 0) {
+                live_ranges.push_back({offset, offset + size, false});
+              } else {
+                // Couldn't determine size, keep all forward
+                live_ranges.push_back({offset, INT64_MAX, false});
+              }
+              break;
+            }
+
+            case ReadSemantics::Unknown:
+              // Unknown function - keep all stores from this offset forward
+              live_ranges.push_back({offset, INT64_MAX, false});
+              break;
+          }
+        }
+      }
+    }
+
+    // If no live ranges found, don't remove anything
+    if (live_ranges.empty()) continue;
+
+    // Collect all stores with their offsets
+    struct StoreInfo {
+      llvm::StoreInst *store;
+      int64_t offset;
+      int64_t size;
+      bool contains_null;
+    };
+    std::vector<StoreInfo> stores;
+
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        auto *store = llvm::dyn_cast<llvm::StoreInst>(&I);
+        if (!store) continue;
+
+        auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(store->getPointerOperand());
+        if (!gep || gep->getPointerOperand() != stack_alloca) continue;
+
+        llvm::APInt offset_ap(64, 0);
+        if (!gep->accumulateConstantOffset(DL, offset_ap)) continue;
+
+        int64_t offset = offset_ap.getSExtValue();
+        int64_t size = DL.getTypeStoreSize(store->getValueOperand()->getType());
+
+        // Check if the stored value contains a null byte
+        bool contains_null = false;
+        if (auto *ci = llvm::dyn_cast<llvm::ConstantInt>(store->getValueOperand())) {
+          uint64_t val = ci->getZExtValue();
+          for (int64_t j = 0; j < size; j++) {
+            if (((val >> (j * 8)) & 0xFF) == 0) {
+              contains_null = true;
+              break;
+            }
+          }
+        }
+
+        stores.push_back({store, offset, size, contains_null});
+      }
+    }
+
+    // Sort stores by offset
+    std::sort(stores.begin(), stores.end(), [](const StoreInfo &a, const StoreInfo &b) {
+      return a.offset < b.offset;
+    });
+
+    // For each live range, mark stores as live
+    std::set<llvm::StoreInst *> live_stores;
+    for (const auto &range : live_ranges) {
+      bool found_null = false;
+      for (const auto &si : stores) {
+        // Skip stores entirely before this range
+        if (si.offset + si.size <= range.start) continue;
+
+        // For null-terminated: stop after finding null
+        if (range.scan_for_null && found_null) break;
+
+        // For fixed-size: stop when we're past the end
+        if (!range.scan_for_null && si.offset >= range.end) break;
+
+        // Keep this store if it overlaps with the range
+        int64_t range_end = range.scan_for_null ? INT64_MAX : range.end;
+        if (si.offset < range_end && si.offset + si.size > range.start) {
+          live_stores.insert(si.store);
+
+          if (range.scan_for_null && si.contains_null) {
+            found_null = true;
+          }
+        }
+      }
+    }
+
+    // Remove stores not in live_stores
+    std::vector<llvm::Instruction *> to_remove;
+    for (const auto &si : stores) {
+      if (live_stores.find(si.store) == live_stores.end()) {
+        to_remove.push_back(si.store);
+      }
+    }
+
+    for (auto *I : to_remove) {
+      I->eraseFromParent();
+    }
+  }
+
+  // Run DCE to clean up unused GEPs
+  llvm::LoopAnalysisManager lam;
+  llvm::FunctionAnalysisManager fam;
+  llvm::CGSCCAnalysisManager cgam;
+  llvm::ModuleAnalysisManager mam;
+
+  llvm::PassBuilder pb;
+  pb.registerModuleAnalyses(mam);
+  pb.registerCGSCCAnalyses(cgam);
+  pb.registerFunctionAnalyses(fam);
+  pb.registerLoopAnalyses(lam);
+  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  llvm::FunctionPassManager fpm;
+  fpm.addPass(llvm::DCEPass());
+  fpm.addPass(llvm::ADCEPass());
+
+  llvm::ModulePassManager mpm;
+  mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+  mpm.run(*module, mam);
+}
+
+void OptimizeWithoutDSE(llvm::Module *module) {
+  // Minimal optimization to fold XOR/loop computations while keeping stores alive.
+  // CRITICAL: We only run SCCP + InstCombine. No GVN/EarlyCSE which forward loads
+  // through stores (making stores appear dead) and no SimplifyCFG which can
+  // eliminate useless code including allocas.
+
+  llvm::LoopAnalysisManager lam;
+  llvm::FunctionAnalysisManager fam;
+  llvm::CGSCCAnalysisManager cgam;
+  llvm::ModuleAnalysisManager mam;
+
+  llvm::PassBuilder pb;
+  pb.registerModuleAnalyses(mam);
+  pb.registerCGSCCAnalyses(cgam);
+  pb.registerFunctionAnalyses(fam);
+  pb.registerLoopAnalyses(lam);
+  pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+  // Minimal constant folding - just SCCP and InstCombine
+  auto runMinimalFolding = [&]() {
+    llvm::FunctionPassManager fpm;
+    fpm.addPass(llvm::SCCPPass());
+    fpm.addPass(llvm::InstCombinePass());
+
+    llvm::ModulePassManager mpm;
+    mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+    mpm.run(*module, mam);
+  };
+
+  // Phase 1: Force full unroll on all loops first
+  {
+    llvm::FunctionPassManager fpm;
+    fpm.addPass(llvm::LoopSimplifyPass());
+    fpm.addPass(llvm::LCSSAPass());
+    fpm.addPass(ForceFullUnrollPass());
+    fpm.addPass(llvm::LoopUnrollPass());
+
+    llvm::ModulePassManager mpm;
+    mpm.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(fpm)));
+    mpm.run(*module, mam);
+  }
+
+  // Phase 2: Multiple rounds of constant folding
+  for (int i = 0; i < 4; ++i) {
+    runMinimalFolding();
+  }
 }
 
 void RemoveMemoryIntrinsics(llvm::Module *module) {

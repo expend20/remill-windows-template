@@ -14,6 +14,11 @@ void OptimizeForCleanIR(llvm::Module *module, llvm::Function *target_func);
 // Only safe to run on clean modules (extracted functions without unsized types)
 void OptimizeAggressive(llvm::Module *module);
 
+// Run O3-like optimization WITHOUT Dead Store Elimination
+// Use before pointer resolution to fold XOR/loop operations while keeping stores alive
+// After pointer resolution creates GEPs, the stores will survive subsequent DSE
+void OptimizeWithoutDSE(llvm::Module *module);
+
 // Run SCCP to propagate constants without dead code elimination
 // Use this before pointer resolution to get constant values while keeping stores alive
 void PropagateConstants(llvm::Module *module);

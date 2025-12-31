@@ -144,8 +144,11 @@ std::string ExternalCallHandler::ReadStringFromPE(uint64_t address) const {
 
 size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
     if (!ShouldResolvePointerData()) {
+        utils::dbg() << "ResolveConstantPointers: pointer resolution disabled\n";
         return 0;
     }
+
+    utils::dbg() << "ResolveConstantPointers: starting on module " << module->getName().str() << "\n";
 
     size_t resolved_count = 0;
     llvm::LLVMContext& llvm_ctx = module->getContext();
@@ -155,9 +158,14 @@ size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
 
     // Iterate all external functions we know about
     for (const auto& [name, config] : registry_.GetAllConfigs()) {
+        utils::dbg() << "ResolveConstantPointers: looking for function '" << name << "'\n";
         // Look up the function in this module (may be different from cached declarations)
         auto* func = module->getFunction(name);
-        if (!func) continue;
+        if (!func) {
+            utils::dbg() << "  Function not found in module\n";
+            continue;
+        }
+        utils::dbg() << "  Found function with " << func->getNumUses() << " uses\n";
 
         // Find all calls to this function
         for (auto* user : func->users()) {
@@ -173,6 +181,14 @@ size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
                 if (config.arg_types[i] != "ptr") continue;
 
                 llvm::Value* arg = call->getArgOperand(i);
+                utils::dbg() << "    Arg " << i << " type: ";
+                if (auto* inttoptr = llvm::dyn_cast<llvm::IntToPtrInst>(arg)) {
+                    utils::dbg() << "IntToPtrInst\n";
+                } else if (auto* ce = llvm::dyn_cast<llvm::ConstantExpr>(arg)) {
+                    utils::dbg() << "ConstantExpr (opcode " << ce->getOpcode() << ")\n";
+                } else {
+                    utils::dbg() << arg->getValueID() << "\n";
+                }
 
                 // Check if it's an inttoptr of a constant
                 auto* inttoptr = llvm::dyn_cast<llvm::IntToPtrInst>(arg);
@@ -186,12 +202,19 @@ size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
                     }
                 }
 
-                if (!const_int) continue;
+                if (!const_int) {
+                    utils::dbg() << "    Not a constant inttoptr, skipping\n";
+                    continue;
+                }
+                utils::dbg() << "    Found constant inttoptr\n";
 
                 uint64_t address = const_int->getZExtValue();
+                utils::dbg() << "    Address: " << llvm::format_hex(address, 0) << "\n";
 
                 // First, check if it's a stack address
                 auto [is_stack, stack_offset] = FindStackOffset(address);
+                utils::dbg() << "    Is stack address: " << (is_stack ? "yes" : "no")
+                             << ", offset: " << stack_offset << "\n";
                 if (is_stack) {
                     // Find or cache the stack alloca for this function
                     llvm::AllocaInst* stack_alloca = nullptr;
@@ -201,6 +224,8 @@ size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
                     } else {
                         stack_alloca = FindStackAlloca(parent_func);
                         stack_alloca_cache[parent_func] = stack_alloca;
+                        utils::dbg() << "    Stack alloca: "
+                                     << (stack_alloca ? "found" : "NOT FOUND") << "\n";
                     }
 
                     if (stack_alloca) {

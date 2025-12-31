@@ -245,16 +245,6 @@ int main(int argc, char **argv) {
   lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info,
                                  &stack_info, wrapper);
 
-  // Resolve pointer data in external call arguments (if enabled)
-  // This must happen BEFORE extraction to connect inttoptr constants
-  // with the stack alloca so DCE doesn't eliminate the stores.
-  if (config->resolve_pointer_data) {
-    size_t resolved = external_handler.ResolveConstantPointers(ctx.GetSemanticsModule());
-    if (resolved > 0) {
-      std::cout << "Resolved " << resolved << " pointer argument(s)\n";
-    }
-  }
-
   // Extract to clean module for optimization
   // Include external function declarations if present
   std::vector<std::string> funcs_to_extract = {"test"};
@@ -264,10 +254,45 @@ int main(int argc, char **argv) {
   auto opt_module = utils::ExtractFunctions(
       ctx.GetSemanticsModule(), funcs_to_extract, "test_optimized");
 
+  // Debug: dump IR right after extraction
+  utils::WriteModule(opt_module.get(), "after_extraction");
+  std::cout << "Written: after_extraction.ll (for debugging)\n";
+
   // Remove flag computation intrinsics
   optimization::RemoveFlagComputationIntrinsics(opt_module.get());
 
-  // Run aggressive optimization
+  // Phase 1: Resolve constant pointers BEFORE optimization
+  // This converts inttoptr(constant) to GEP, keeping the alloca alive
+  // For puts_stack: pointer is already constant, resolves immediately
+  // For xorstr: pointer is dynamic, will be resolved after XOR folding
+  size_t resolved_phase1 = 0;
+  if (config->resolve_pointer_data) {
+    resolved_phase1 = external_handler.ResolveConstantPointers(opt_module.get());
+    if (resolved_phase1 > 0) {
+      std::cout << "Resolved " << resolved_phase1 << " pointer argument(s) in phase 1\n";
+    }
+  }
+
+  // Phase 2: Fold XOR/loop operations without eliminating stores
+  // This runs O3-like optimization but skips Dead Store Elimination
+  // so that stores to stack memory remain alive until pointer resolution
+  optimization::OptimizeWithoutDSE(opt_module.get());
+
+  // Debug: dump IR after OptimizeWithoutDSE
+  utils::WriteModule(opt_module.get(), "after_no_dse");
+  std::cout << "Written: after_no_dse.ll (for debugging)\n";
+
+  // Phase 3: Resolve constant pointers again (for xorstr case)
+  // After OptimizeWithoutDSE, XOR operations are folded, making pointers constant
+  if (config->resolve_pointer_data && resolved_phase1 == 0) {
+    size_t resolved_phase2 = external_handler.ResolveConstantPointers(opt_module.get());
+    if (resolved_phase2 > 0) {
+      std::cout << "Resolved " << resolved_phase2 << " pointer argument(s) in phase 2\n";
+    }
+  }
+
+  // Phase 3: Full optimization including Dead Store Elimination
+  // The GEPs created above keep the stores alive
   optimization::OptimizeAggressive(opt_module.get());
 
   // Write the optimized module

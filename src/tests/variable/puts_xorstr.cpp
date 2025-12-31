@@ -6,6 +6,6 @@
 #include "xorstr.hpp"
 
 extern "C" int test_proc() {
-    puts(xorstr_("Hello"));
+    puts(xorstr_("Hello world!"));
     return 4919;
 }

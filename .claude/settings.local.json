@@ -38,7 +38,11 @@
       "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_stack.config.json --debug)",
       "Bash(./test.exe:*)",
       "Bash(E:/temp/remill-windows-template/build/tests/variable/external_puts_stack/relifted.exe)",
-      "Bash(./relifted.exe)"
+      "Bash(./relifted.exe)",
+      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_xorstr.config.json --debug)",
+      "Bash(git checkout:*)",
+      "Bash(python3:*)",
+      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_xorstr.config.json)"
     ]
   }
 }
