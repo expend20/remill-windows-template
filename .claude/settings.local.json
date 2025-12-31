@@ -37,7 +37,8 @@
       "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_stack.config.json)",
       "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_stack.config.json --debug)",
       "Bash(./test.exe:*)",
-      "Bash(E:/temp/remill-windows-template/build/tests/variable/external_puts_stack/relifted.exe)"
+      "Bash(E:/temp/remill-windows-template/build/tests/variable/external_puts_stack/relifted.exe)",
+      "Bash(./relifted.exe)"
     ]
   }
 }

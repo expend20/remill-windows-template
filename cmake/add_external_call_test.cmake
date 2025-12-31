@@ -30,7 +30,9 @@ function(add_external_call_test)
     # Step 1: Generate .cpp -> .ll (unoptimized LLVM IR)
     add_custom_command(
         OUTPUT ${INPUT_LL}
-        COMMAND ${CLANG_EXECUTABLE} -S -emit-llvm -O0 -o ${INPUT_LL} ${ARG_CPP}
+        COMMAND ${CLANG_EXECUTABLE} -S -emit-llvm -O0 -std=c++17
+            -I${CMAKE_SOURCE_DIR}/src/deps/xorstr/include
+            -o ${INPUT_LL} ${ARG_CPP}
         DEPENDS ${ARG_CPP}
         COMMENT "[${ARG_NAME}] Generating input.ll (unoptimized)..."
         WORKING_DIRECTORY ${BUILD_DIR}
