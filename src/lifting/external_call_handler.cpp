@@ -182,7 +182,7 @@ size_t ExternalCallHandler::ResolveConstantPointers(llvm::Module* module) {
 
                 llvm::Value* arg = call->getArgOperand(i);
                 utils::dbg() << "    Arg " << i << " type: ";
-                if (auto* inttoptr = llvm::dyn_cast<llvm::IntToPtrInst>(arg)) {
+                if (llvm::isa<llvm::IntToPtrInst>(arg)) {
                     utils::dbg() << "IntToPtrInst\n";
                 } else if (auto* ce = llvm::dyn_cast<llvm::ConstantExpr>(arg)) {
                     utils::dbg() << "ConstantExpr (opcode " << ce->getOpcode() << ")\n";

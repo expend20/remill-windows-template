@@ -11,7 +11,7 @@
 # 1. Compiles C++ to LLVM IR
 # 2. Compiles to object file
 # 3. Links to executable (with ucrt.lib for imports)
-# 4. Lifts executable back to LLVM IR (using variable_lifter)
+# 4. Lifts executable back to LLVM IR (using lifter with config)
 # 5. Verifies the optimized IR contains expected external call
 # 6. (Optional) If WRAPPER is provided, compiles lifted IR + wrapper to executable
 #
@@ -58,15 +58,15 @@ function(add_external_call_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
-    # Step 4: Lift .exe -> .ll/.bc (using variable_lifter)
+    # Step 4: Lift .exe -> .ll/.bc (using lifter with config)
     add_custom_command(
         OUTPUT
             ${BUILD_DIR}/test_optimized.ll
             ${OPTIMIZED_BC}
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
-        COMMAND variable_lifter ${EXE_FILE} ${ARG_CONFIG}
-        DEPENDS variable_lifter ${EXE_FILE} ${ARG_CONFIG}
+        COMMAND lifter ${EXE_FILE} ${ARG_CONFIG}
+        DEPENDS lifter ${EXE_FILE} ${ARG_CONFIG}
         COMMENT "[${ARG_NAME}] Lifting with external call support..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )

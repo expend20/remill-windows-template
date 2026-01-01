@@ -1,7 +1,9 @@
-// Variable lifting test
-// Lifts code with variable (non-constant) register inputs
-// Also supports external function calls (imports like puts)
-// Produces an executable that takes input values and returns the computed result
+// Unified lifter for binary deobfuscation
+// Lifts x86-64 PE binaries to LLVM IR and optimizes aggressively
+// Unresolved variables and external calls are preserved as-is
+//
+// Usage:
+//   lifter <shellcode.exe> [config.json] [--debug]
 
 #include <cstdlib>
 #include <fstream>
@@ -78,48 +80,55 @@ void GenerateMainFunction(llvm::Module *module, llvm::Function *test_func,
 }
 
 void PrintUsage(const char *prog) {
-  std::cerr << "Usage: " << prog << " <shellcode.exe> <config.json> [--debug]\n";
+  std::cerr << "Usage: " << prog << " <shellcode.exe> [config.json] [--debug]\n";
 }
 
 int main(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
 
-  if (argc < 3) {
+  if (argc < 2) {
     PrintUsage(argv[0]);
     return EXIT_FAILURE;
   }
 
   const char *shellcode_path = argv[1];
-  const char *config_path = argv[2];
+  const char *config_path = nullptr;
 
-  // Parse --debug flag
-  for (int i = 3; i < argc; ++i) {
-    if (std::string(argv[i]) == "--debug") {
+  // Parse arguments: config file (if .json) and --debug flag
+  for (int i = 2; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--debug") {
       utils::g_debug = true;
+    } else if (arg.size() > 5 && arg.substr(arg.size() - 5) == ".json") {
+      config_path = argv[i];
     }
   }
 
-  // Parse config
-  auto config = lifting::ParseVariableConfig(config_path);
-  if (!config) {
-    return EXIT_FAILURE;
-  }
-
-  if (config->HasVariableInputs()) {
-    std::cout << "Variable registers: ";
-    for (const auto &var : config->input_registers) {
-      std::cout << var << " ";
+  // Parse config (use default if not provided)
+  lifting::VariableConfig config;
+  if (config_path) {
+    auto parsed = lifting::ParseVariableConfig(config_path);
+    if (!parsed) {
+      return EXIT_FAILURE;
     }
-    std::cout << "\n";
-  }
-  std::cout << "Return register: " << config->return_register << "\n";
+    config = std::move(*parsed);
 
-  if (config->external_calls.HasExternalCalls()) {
-    std::cout << "External calls configured: ";
-    for (const auto &[name, cfg] : config->external_calls.GetAllConfigs()) {
-      std::cout << name << "(" << cfg.arg_types.size() << " args) ";
+    if (config.HasVariableInputs()) {
+      std::cout << "Variable registers: ";
+      for (const auto &var : config.input_registers) {
+        std::cout << var << " ";
+      }
+      std::cout << "\n";
     }
-    std::cout << "\n";
+    std::cout << "Return register: " << config.return_register << "\n";
+
+    if (config.external_calls.HasExternalCalls()) {
+      std::cout << "External calls configured: ";
+      for (const auto &[name, cfg] : config.external_calls.GetAllConfigs()) {
+        std::cout << name << "(" << cfg.arg_types.size() << " args) ";
+      }
+      std::cout << "\n";
+    }
   }
 
   // Read full PE file
@@ -137,16 +146,19 @@ int main(int argc, char **argv) {
   }
 
   std::cout << "Loaded PE with " << pe_info->sections.size() << " sections\n";
-  std::cout << "Found " << pe_info->imports.size() << " imports\n";
+  for (const auto &sec : pe_info->sections) {
+    std::cout << "  " << sec.name << ": " << sec.bytes.size() << " bytes at RVA 0x"
+              << std::hex << sec.virtual_address << std::dec << "\n";
+  }
 
-  // Print imports for debugging
+  std::cout << "Found " << pe_info->imports.size() << " imports\n";
   for (const auto &import : pe_info->imports) {
     utils::dbg() << "Import: " << import.dll_name << "::" << import.function_name
                  << " at IAT VA " << llvm::format_hex(import.iat_va, 0) << "\n";
   }
 
   // Link external call config with PE imports
-  config->external_calls.LinkWithImports(pe_info->imports);
+  config.external_calls.LinkWithImports(pe_info->imports);
 
   // Initialize lifting context
   lifting::LiftingContext ctx("windows", "amd64");
@@ -154,20 +166,17 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // Create external call handler (may be empty if no external calls configured)
-  lifting::ExternalCallHandler external_handler(ctx, config->external_calls);
-
-  // Configure handler with PE info for pointer resolution
+  // Create external call handler
+  lifting::ExternalCallHandler external_handler(ctx, config.external_calls);
   external_handler.SetPEInfo(&(*pe_info));
-  external_handler.SetResolvePointerData(config->resolve_pointer_data);
+  external_handler.SetResolvePointerData(config.resolve_pointer_data);
 
-  if (config->resolve_pointer_data) {
+  if (config.resolve_pointer_data) {
     std::cout << "Pointer data resolution: enabled\n";
   }
 
   // Create external function declarations BEFORE lifting
-  // so they're available when generating external calls
-  if (config->external_calls.HasExternalCalls()) {
+  if (config.external_calls.HasExternalCalls()) {
     external_handler.CreateDeclarations(ctx.GetSemanticsModule());
   }
 
@@ -176,14 +185,14 @@ int main(int argc, char **argv) {
   uint64_t entry_point = pe_info->image_base + pe_info->entry_point_rva;
 
   // Create lifted function
-  auto *lifted_func = ctx.DefineLiftedFunction("lifted_variable");
+  auto *lifted_func = ctx.DefineLiftedFunction("lifted_func");
 
   // Use control flow-aware lifter
   lifting::ControlFlowLifter lifter(ctx);
   lifter.SetPEInfo(&(*pe_info));
 
   // Set external call handler if we have external calls
-  if (config->external_calls.HasExternalCalls()) {
+  if (config.external_calls.HasExternalCalls()) {
     lifter.SetExternalCallHandler(&external_handler);
   }
 
@@ -208,17 +217,17 @@ int main(int argc, char **argv) {
   // Prepare lifted function for inlining
   lifting::WrapperBuilder::PrepareForInlining(lifted_func);
 
-  // Create wrapper (with or without variable registers)
+  // Create wrapper
   llvm::Function *wrapper = nullptr;
   lifting::WrapperBuilder wrapper_builder(ctx);
 
-  if (!config->HasVariableInputs()) {
+  if (!config.HasVariableInputs()) {
     // No variable inputs - create constant wrapper
     wrapper = wrapper_builder.CreateInt32ReturnWrapper("test", lifted_func, entry_point);
   } else {
     // Variable inputs - create parameterized wrapper
     wrapper = wrapper_builder.CreateParameterizedWrapper(
-        "test", lifted_func, entry_point, *config);
+        "test", lifted_func, entry_point, config);
   }
 
   // Create backing globals from PE sections
@@ -227,7 +236,7 @@ int main(int argc, char **argv) {
   // Extract lifted functions for debugging
   auto extracted_module = utils::ExtractFunctions(
       ctx.GetSemanticsModule(),
-      {"test", "lifted_variable"},
+      {"test", "lifted_func"},
       "lifted_code");
   utils::WriteModule(extracted_module.get(), "lifted");
 
@@ -248,86 +257,73 @@ int main(int argc, char **argv) {
   // Extract to clean module for optimization
   // Include external function declarations if present
   std::vector<std::string> funcs_to_extract = {"test"};
-  for (const auto &[name, cfg] : config->external_calls.GetAllConfigs()) {
+  for (const auto &[name, cfg] : config.external_calls.GetAllConfigs()) {
     funcs_to_extract.push_back(name);
   }
   auto opt_module = utils::ExtractFunctions(
       ctx.GetSemanticsModule(), funcs_to_extract, "test_optimized");
 
-  // Debug: dump IR right after extraction
-  utils::WriteModule(opt_module.get(), "after_extraction");
-  std::cout << "Written: after_extraction.ll (for debugging)\n";
-
   // Remove flag computation intrinsics
   optimization::RemoveFlagComputationIntrinsics(opt_module.get());
 
-  // Phase 1: Resolve constant pointers BEFORE optimization
-  // This converts inttoptr(constant) to GEP, keeping the alloca alive
-  // For puts_stack: pointer is already constant, resolves immediately
-  // For xorstr: pointer is dynamic, will be resolved after XOR folding
+  // Phase optimization for pointer resolution
   size_t resolved_phase1 = 0;
-  if (config->resolve_pointer_data) {
+  if (config.resolve_pointer_data) {
     resolved_phase1 = external_handler.ResolveConstantPointers(opt_module.get());
     if (resolved_phase1 > 0) {
       std::cout << "Resolved " << resolved_phase1 << " pointer argument(s) in phase 1\n";
     }
-  }
 
-  // Phase 2: Fold XOR/loop operations without eliminating stores
-  // This runs O3-like optimization but skips Dead Store Elimination
-  // so that stores to stack memory remain alive until pointer resolution
-  optimization::OptimizeWithoutDSE(opt_module.get());
+    // Phase 2: Fold XOR/loop operations without eliminating stores
+    optimization::OptimizeWithoutDSE(opt_module.get());
 
-  // Debug: dump IR after OptimizeWithoutDSE
-  utils::WriteModule(opt_module.get(), "after_no_dse");
-  std::cout << "Written: after_no_dse.ll (for debugging)\n";
-
-  // Phase 3: Resolve constant pointers again (for xorstr case)
-  // After OptimizeWithoutDSE, XOR operations are folded, making pointers constant
-  if (config->resolve_pointer_data && resolved_phase1 == 0) {
-    size_t resolved_phase2 = external_handler.ResolveConstantPointers(opt_module.get());
-    if (resolved_phase2 > 0) {
-      std::cout << "Resolved " << resolved_phase2 << " pointer argument(s) in phase 2\n";
+    // Phase 3: Resolve constant pointers again (for xorstr case)
+    if (resolved_phase1 == 0) {
+      size_t resolved_phase2 = external_handler.ResolveConstantPointers(opt_module.get());
+      if (resolved_phase2 > 0) {
+        std::cout << "Resolved " << resolved_phase2 << " pointer argument(s) in phase 2\n";
+      }
     }
   }
 
-  // Phase 3: Full optimization including Dead Store Elimination
-  // The GEPs created above keep the stores alive
+  // Run full O3 optimization to fold loops and constant propagation
   optimization::OptimizeAggressive(opt_module.get());
 
   // Write the optimized module
   utils::WriteModule(opt_module.get(), "test_optimized");
 
-  // Verify external calls are present (if configured)
-  bool found_external_call = false;
-  if (auto *test_func = opt_module->getFunction("test")) {
-    for (auto &BB : *test_func) {
-      for (auto &I : BB) {
-        if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
-          if (auto *callee = call->getCalledFunction()) {
-            if (config->external_calls.FindByName(callee->getName().str())) {
-              std::cout << "External call preserved: " << callee->getName().str() << "\n";
-              found_external_call = true;
+  // Report external calls if present
+  if (config.external_calls.HasExternalCalls()) {
+    bool found_external_call = false;
+    if (auto *test_func = opt_module->getFunction("test")) {
+      for (auto &BB : *test_func) {
+        for (auto &I : BB) {
+          if (auto *call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+            if (auto *callee = call->getCalledFunction()) {
+              if (config.external_calls.FindByName(callee->getName().str())) {
+                std::cout << "External call preserved: " << callee->getName().str() << "\n";
+                found_external_call = true;
+              }
             }
           }
         }
       }
     }
+
+    if (!found_external_call) {
+      std::cerr << "WARNING: Expected external calls were not found in optimized IR\n";
+    }
   }
 
-  if (config->external_calls.HasExternalCalls() && !found_external_call) {
-    std::cerr << "WARNING: Expected external calls were not found in optimized IR\n";
-  }
-
-  // Generate main function for variable test runner (only if we have variables)
-  if (config->HasVariableInputs()) {
+  // Generate main function for test runner (only if we have variable inputs)
+  if (config.HasVariableInputs()) {
     auto *test_func = opt_module->getFunction("test");
     if (!test_func) {
       std::cerr << "Test function not found after optimization\n";
       return EXIT_FAILURE;
     }
 
-    GenerateMainFunction(opt_module.get(), test_func, config->input_registers);
+    GenerateMainFunction(opt_module.get(), test_func, config.input_registers);
 
     // Write module with main function
     utils::WriteModule(opt_module.get(), "test_runner");

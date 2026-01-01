@@ -5,7 +5,7 @@
 #   ENTRY <entry_point>  # Optional, defaults to "main"
 #   TESTS <test_cases>   # List of "input:expected" pairs, e.g., "0:4919|100:5019"
 # )
-# Note: Uses the shared 'variable_lifter' target defined in CMakeLists.txt
+# Note: Uses the shared 'lifter' target defined in CMakeLists.txt
 # Tests are grouped under: build/tests/variable/<test_name>/
 function(add_variable_test)
     cmake_parse_arguments(ARG "" "NAME;ASM;CONFIG;ENTRY;TESTS" "" ${ARGN})
@@ -58,8 +58,8 @@ function(add_variable_test)
             ${RUNNER_BC}
             ${BUILD_DIR}/lifted.ll
             ${BUILD_DIR}/lifted.bc
-        COMMAND variable_lifter ${EXE_FILE} ${ARG_CONFIG}
-        DEPENDS variable_lifter ${EXE_FILE} ${ARG_CONFIG}
+        COMMAND lifter ${EXE_FILE} ${ARG_CONFIG}
+        DEPENDS lifter ${EXE_FILE} ${ARG_CONFIG}
         COMMENT "[${ARG_NAME}] Lifting with variable support..."
         WORKING_DIRECTORY ${BUILD_DIR}
     )
