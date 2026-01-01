@@ -115,23 +115,18 @@ std::optional<VariableConfig> ParseVariableConfig(const std::string& config_path
         return std::nullopt;
     }
 
-    // Parse "resolve_pointer_data": true/false (optional, defaults to false)
-    if (auto resolve = root->getBoolean("resolve_pointer_data")) {
-        config.resolve_pointer_data = *resolve;
-    }
-
-    // Parse "global_write_mode": "optimize" | "lifted" | "original_va"
-    if (auto mode = root->getString("global_write_mode")) {
+    // Parse "global_mode": "constant" | "lifted" | "original_va"
+    if (auto mode = root->getString("global_mode")) {
         std::string mode_str = mode->str();
-        if (mode_str == "optimize") {
-            config.global_write_mode = GlobalWriteMode::Optimize;
+        if (mode_str == "constant") {
+            config.global_mode = GlobalMode::Constant;
         } else if (mode_str == "lifted") {
-            config.global_write_mode = GlobalWriteMode::Lifted;
+            config.global_mode = GlobalMode::Lifted;
         } else if (mode_str == "original_va") {
-            config.global_write_mode = GlobalWriteMode::OriginalVA;
+            config.global_mode = GlobalMode::OriginalVA;
         } else {
-            std::cerr << "Unknown global_write_mode: " << mode_str << "\n";
-            std::cerr << "Valid values: optimize, lifted, original_va\n";
+            std::cerr << "Unknown global_mode: " << mode_str << "\n";
+            std::cerr << "Valid values: constant, lifted, original_va\n";
             return std::nullopt;
         }
     }

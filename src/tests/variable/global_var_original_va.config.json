@@ -1,7 +1,7 @@
 {
   "variables": ["rcx"],
   "return_register": "rax",
-  "global_write_mode": "original_va",
+  "global_mode": "original_va",
   "verify": {
     "max_instructions": 3,
     "required_immediates": [4919],

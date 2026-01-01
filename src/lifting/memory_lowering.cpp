@@ -292,7 +292,7 @@ StackBackingInfo CreateStackAlloca(llvm::Function *func,
 
 MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,
                                        const utils::PEInfo &pe_info,
-                                       GlobalWriteMode global_write_mode) {
+                                       GlobalMode global_mode) {
   MemoryBackingInfo info;
   auto &context = module->getContext();
 
@@ -301,44 +301,37 @@ MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,
       continue;
     }
 
-    // Create array type for section data
-    auto arr_type =
-        llvm::ArrayType::get(llvm::Type::getInt8Ty(context), section.bytes.size());
-
-    // Create constant initializer from section bytes
-    auto data = llvm::ConstantDataArray::get(context, section.bytes);
-
-    // Determine if section is writable (.data, .bss) or read-only (.rdata, .text)
     bool is_writable = section.IsWritable();
     uint64_t start_va = pe_info.image_base + section.virtual_address;
     uint64_t end_va = start_va + section.bytes.size();
 
-    // For OriginalVA mode, skip creating globals for writable sections
-    // (will emit inttoptr stores to original VA instead)
-    if (global_write_mode == GlobalWriteMode::OriginalVA && is_writable) {
+    // OriginalVA mode: Create NO globals (will use inttoptr for all sections)
+    if (global_mode == GlobalMode::OriginalVA) {
       info.sections.push_back({start_va, end_va, nullptr, is_writable});
-      std::cout << "Skipping global for writable section " << section.name
+      std::cout << "Skipping global for section " << section.name
                 << " (will use original VA 0x" << std::hex << start_va << ")\n" << std::dec;
       continue;
     }
 
-    // Create global variable based on mode:
-    // - Optimize: private linkage, constant (stores may be eliminated)
-    // - Lifted: external linkage, mutable for writable sections
-    bool use_mutable = (global_write_mode == GlobalWriteMode::Lifted) && is_writable;
-    auto linkage = use_mutable
-        ? llvm::GlobalValue::ExternalLinkage
-        : llvm::GlobalValue::PrivateLinkage;
+    // Constant and Lifted modes: Create globals for ALL sections
+    auto arr_type =
+        llvm::ArrayType::get(llvm::Type::getInt8Ty(context), section.bytes.size());
+    auto data = llvm::ConstantDataArray::get(context, section.bytes);
+
+    // Constant mode: private linkage (allows optimization via allocas)
+    // Lifted mode: external linkage (preserves globals in output)
+    auto linkage = (global_mode == GlobalMode::Constant)
+        ? llvm::GlobalValue::PrivateLinkage
+        : llvm::GlobalValue::ExternalLinkage;
+
     auto global = new llvm::GlobalVariable(
-        *module, arr_type, /*isConstant=*/!use_mutable,
+        *module, arr_type, /*isConstant=*/false,
         linkage, data,
         "__section_" + section.name);
 
-    // Record mapping with writability info
     info.sections.push_back({start_va, end_va, global, is_writable});
 
-    const char *mode_str = use_mutable ? "mutable" : "constant";
-    std::cout << "Created " << mode_str << " backing global for section " << section.name
+    std::cout << "Created mutable backing global for section " << section.name
               << " at VA range 0x" << std::hex << start_va << "-0x" << end_va
               << std::dec << " (" << section.bytes.size() << " bytes)\n";
   }
@@ -350,53 +343,49 @@ void LowerMemoryIntrinsics(llvm::Module *module,
                            const MemoryBackingInfo &memory_info,
                            const StackBackingInfo *stack_info,
                            llvm::Function *target_func,
-                           GlobalWriteMode global_write_mode) {
+                           GlobalMode global_mode) {
   if (!target_func || target_func->empty()) {
     return;
   }
 
   auto &context = module->getContext();
 
-  // Create allocas based on mode:
-  // - Optimize: allocas for all sections (stores may be eliminated)
-  // - Lifted: allocas for read-only, use global directly for writable
-  // - OriginalVA: allocas for read-only, inttoptr for writable (no global)
+  // For Constant mode: create allocas from globals (enables SROA optimization)
+  // For Lifted mode: use globals directly
+  // For OriginalVA mode: use inttoptr (no globals)
   std::map<llvm::GlobalVariable*, llvm::AllocaInst*> global_to_alloca;
 
-  llvm::IRBuilder<> entry_builder(&target_func->getEntryBlock().front());
+  if (global_mode == GlobalMode::Constant) {
+    llvm::IRBuilder<> entry_builder(&target_func->getEntryBlock().front());
 
-  for (const auto &mapping : memory_info.sections) {
-    auto *global = mapping.global;
+    for (const auto &mapping : memory_info.sections) {
+      auto *global = mapping.global;
+      if (!global) continue;
 
-    // OriginalVA mode: writable sections have no global (will use inttoptr)
-    if (global_write_mode == GlobalWriteMode::OriginalVA && mapping.is_writable) {
-      std::cout << "Using original VA for writable section at 0x"
-                << std::hex << mapping.start_va << std::dec << "\n";
-      continue;
+      auto *arr_type = global->getValueType();
+
+      // Create alloca at function entry
+      auto *alloca = entry_builder.CreateAlloca(arr_type, nullptr,
+          global->getName().str() + "_local");
+
+      // Copy initial data from global to alloca
+      auto *size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context),
+          module->getDataLayout().getTypeAllocSize(arr_type));
+      entry_builder.CreateMemCpy(alloca, llvm::MaybeAlign(1),
+          global, llvm::MaybeAlign(1), size);
+
+      global_to_alloca[global] = alloca;
+      std::cout << "Created local alloca for " << global->getName().str() << "\n";
     }
-
-    // Lifted mode: use global directly for writable sections
-    if (global_write_mode == GlobalWriteMode::Lifted && mapping.is_writable) {
-      std::cout << "Using mutable global directly for " << global->getName().str() << "\n";
-      continue;
+  } else if (global_mode == GlobalMode::Lifted) {
+    for (const auto &mapping : memory_info.sections) {
+      if (mapping.global) {
+        std::cout << "Using mutable global directly for "
+                  << mapping.global->getName().str() << "\n";
+      }
     }
-
-    // All other cases: create alloca for optimization
-    auto *arr_type = global->getValueType();
-
-    // Create alloca at function entry
-    auto *alloca = entry_builder.CreateAlloca(arr_type, nullptr,
-        global->getName().str() + "_local");
-
-    // Copy initial data from global to alloca
-    auto *size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context),
-        module->getDataLayout().getTypeAllocSize(arr_type));
-    entry_builder.CreateMemCpy(alloca, llvm::MaybeAlign(1),
-        global, llvm::MaybeAlign(1), size);
-
-    global_to_alloca[global] = alloca;
-
-    std::cout << "Created local alloca for " << global->getName().str() << "\n";
+  } else {
+    std::cout << "Using original VAs for all sections (inttoptr mode)\n";
   }
 
   // Build a set of memory intrinsic functions to recognize
@@ -501,32 +490,32 @@ void LowerMemoryIntrinsics(llvm::Module *module,
         uint64_t address = addr_const->getZExtValue();
         read_address = address;
 
-        // Try global sections first
+        // Try global sections first (Constant and Lifted modes have globals)
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
 
         if (global) {
           llvm::IRBuilder<> ir(call);
-          auto it = global_to_alloca.find(global);
-          // Use alloca for read-only sections, global directly for writable sections
-          llvm::Value *base_ptr = (it != global_to_alloca.end())
-              ? static_cast<llvm::Value*>(it->second)
+          // In Constant mode, use alloca; in Lifted mode, use global directly
+          auto alloca_it = global_to_alloca.find(global);
+          llvm::Value *base_ptr = (alloca_it != global_to_alloca.end())
+              ? static_cast<llvm::Value*>(alloca_it->second)
               : static_cast<llvm::Value*>(global);
-          auto *base_type = (it != global_to_alloca.end())
-              ? it->second->getAllocatedType()
+          auto *base_type = (alloca_it != global_to_alloca.end())
+              ? alloca_it->second->getAllocatedType()
               : global->getValueType();
 
           auto *ptr = ir.CreateConstGEP2_64(base_type, base_ptr, 0, offset, "mem_ptr");
           auto *val = ir.CreateLoad(call->getType(), ptr, "mem_val");
 
           replacement = val;
-          bool is_mutable = (it == global_to_alloca.end());
+          bool uses_alloca = (alloca_it != global_to_alloca.end());
           std::cout << "Lowered read at 0x" << std::hex << address
-                    << " -> load from " << (is_mutable ? "mutable global" : "global alloca")
+                    << " -> load from " << (uses_alloca ? "alloca" : "global")
                     << " + " << std::dec << offset << "\n";
         }
-        // OriginalVA mode: writable section with no global, use inttoptr
-        else if (auto *section = FindSectionForAddress(memory_info, address)) {
-          if (section->is_writable && global_write_mode == GlobalWriteMode::OriginalVA) {
+        // OriginalVA mode: use inttoptr for all sections
+        else if (global_mode == GlobalMode::OriginalVA) {
+          if (FindSectionForAddress(memory_info, address)) {
             llvm::IRBuilder<> ir(call);
             auto *ptr = ir.CreateIntToPtr(
                 llvm::ConstantInt::get(ir.getInt64Ty(), address),
@@ -557,17 +546,17 @@ void LowerMemoryIntrinsics(llvm::Module *module,
         auto [base_va, dyn_offset] = DecomposeAddressWithTracking(
             addr_arg, memory_info, stack_info, tracker);
         if (base_va && dyn_offset) {
-          // Try global sections
+          // Try global sections (Constant and Lifted modes)
           auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
           if (global) {
             llvm::IRBuilder<> ir(call);
-            auto it = global_to_alloca.find(global);
-            // Use alloca for read-only sections, global directly for writable sections
-            llvm::Value *base_ptr = (it != global_to_alloca.end())
-                ? static_cast<llvm::Value*>(it->second)
+            // In Constant mode, use alloca; in Lifted mode, use global directly
+            auto alloca_it = global_to_alloca.find(global);
+            llvm::Value *base_ptr = (alloca_it != global_to_alloca.end())
+                ? static_cast<llvm::Value*>(alloca_it->second)
                 : static_cast<llvm::Value*>(global);
-            auto *base_type = (it != global_to_alloca.end())
-                ? it->second->getAllocatedType()
+            auto *base_type = (alloca_it != global_to_alloca.end())
+                ? alloca_it->second->getAllocatedType()
                 : global->getValueType();
 
             // Compute total offset: section_offset + dynamic_offset
@@ -585,9 +574,9 @@ void LowerMemoryIntrinsics(llvm::Module *module,
             auto *val = ir.CreateLoad(call->getType(), ptr, "dyn_mem_val");
 
             replacement = val;
-            bool is_mutable = (it == global_to_alloca.end());
+            bool uses_alloca = (alloca_it != global_to_alloca.end());
             std::cout << "Lowered dynamic read (base 0x" << std::hex << base_va
-                      << " + offset) -> load from " << (is_mutable ? "mutable global" : "global alloca")
+                      << " + offset) -> load from " << (uses_alloca ? "alloca" : "global")
                       << "\n" << std::dec;
           }
           // Try stack if global not found
@@ -669,32 +658,32 @@ void LowerMemoryIntrinsics(llvm::Module *module,
           }
         }
 
-        // Try global sections first
+        // Try global sections first (Constant and Lifted modes have globals)
         auto [global, offset] = memory_info.FindGlobalForAddress(address);
 
         if (global) {
           llvm::IRBuilder<> ir(call);
-          auto it = global_to_alloca.find(global);
-          // Use alloca for read-only sections, global directly for writable sections
-          llvm::Value *base_ptr = (it != global_to_alloca.end())
-              ? static_cast<llvm::Value*>(it->second)
+          // In Constant mode, use alloca; in Lifted mode, use global directly
+          auto alloca_it = global_to_alloca.find(global);
+          llvm::Value *base_ptr = (alloca_it != global_to_alloca.end())
+              ? static_cast<llvm::Value*>(alloca_it->second)
               : static_cast<llvm::Value*>(global);
-          auto *base_type = (it != global_to_alloca.end())
-              ? it->second->getAllocatedType()
+          auto *base_type = (alloca_it != global_to_alloca.end())
+              ? alloca_it->second->getAllocatedType()
               : global->getValueType();
 
           auto *ptr = ir.CreateConstGEP2_64(base_type, base_ptr, 0, offset, "mem_ptr");
           ir.CreateStore(value_arg, ptr);
 
           lowered = true;
-          bool is_mutable = (it == global_to_alloca.end());
+          bool uses_alloca = (alloca_it != global_to_alloca.end());
           std::cout << "Lowered write at 0x" << std::hex << address
-                    << " -> store to " << (is_mutable ? "mutable global" : "global alloca")
+                    << " -> store to " << (uses_alloca ? "alloca" : "global")
                     << " + " << std::dec << offset << "\n";
         }
-        // OriginalVA mode: writable section with no global, use inttoptr
-        else if (auto *section = FindSectionForAddress(memory_info, address)) {
-          if (section->is_writable && global_write_mode == GlobalWriteMode::OriginalVA) {
+        // OriginalVA mode: use inttoptr for all sections
+        else if (global_mode == GlobalMode::OriginalVA) {
+          if (FindSectionForAddress(memory_info, address)) {
             llvm::IRBuilder<> ir(call);
             auto *ptr = ir.CreateIntToPtr(
                 llvm::ConstantInt::get(ir.getInt64Ty(), address),
@@ -725,17 +714,17 @@ void LowerMemoryIntrinsics(llvm::Module *module,
         auto [base_va, dyn_offset] = DecomposeAddressWithTracking(
             addr_arg, memory_info, stack_info, tracker);
         if (base_va && dyn_offset) {
-          // Try global sections
+          // Try global sections (Constant and Lifted modes)
           auto [global, section_offset] = memory_info.FindGlobalForAddress(base_va);
           if (global) {
             llvm::IRBuilder<> ir(call);
-            auto it = global_to_alloca.find(global);
-            // Use alloca for read-only sections, global directly for writable sections
-            llvm::Value *base_ptr = (it != global_to_alloca.end())
-                ? static_cast<llvm::Value*>(it->second)
+            // In Constant mode, use alloca; in Lifted mode, use global directly
+            auto alloca_it = global_to_alloca.find(global);
+            llvm::Value *base_ptr = (alloca_it != global_to_alloca.end())
+                ? static_cast<llvm::Value*>(alloca_it->second)
                 : static_cast<llvm::Value*>(global);
-            auto *base_type = (it != global_to_alloca.end())
-                ? it->second->getAllocatedType()
+            auto *base_type = (alloca_it != global_to_alloca.end())
+                ? alloca_it->second->getAllocatedType()
                 : global->getValueType();
 
             // Compute total offset: section_offset + dynamic_offset
@@ -753,9 +742,9 @@ void LowerMemoryIntrinsics(llvm::Module *module,
             ir.CreateStore(value_arg, ptr);
 
             lowered = true;
-            bool is_mutable = (it == global_to_alloca.end());
+            bool uses_alloca = (alloca_it != global_to_alloca.end());
             std::cout << "Lowered dynamic write (base 0x" << std::hex << base_va
-                      << " + offset) -> store to " << (is_mutable ? "mutable global" : "global alloca")
+                      << " + offset) -> store to " << (uses_alloca ? "alloca" : "global")
                       << "\n" << std::dec;
           }
           // Try stack if global not found

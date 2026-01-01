@@ -36,8 +36,7 @@ Warning! Never references the code frome @NOT_INTEGRATED directory, only use it 
 
 ## FILE PATH HANDLING (IMPORTANT):
 
-- Always use RELATIVE paths from the project root.
+- Always use ABSOLUTE paths from the project root.
 - Always use forward slashes `/` in paths, even on Windows.
 - Never mix absolute and relative paths in the same task.
 - Never switch path formats between read and write operations.
-- Before editing a file, always re-read it in the same message.

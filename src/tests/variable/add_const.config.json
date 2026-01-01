@@ -1,6 +1,7 @@
 {
   "variables": ["rcx"],
   "return_register": "rax",
+  "global_mode": "lifted",
   "verify": {
     "max_instructions": 3,
     "required_immediates": [4919]

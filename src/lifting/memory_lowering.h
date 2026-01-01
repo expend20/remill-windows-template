@@ -16,7 +16,7 @@ struct PEInfo;
 namespace lifting {
 
 // Forward declaration
-enum class GlobalWriteMode;
+enum class GlobalMode;
 
 // Holds mapping from virtual addresses to LLVM globals
 struct MemoryBackingInfo {
@@ -36,13 +36,13 @@ struct MemoryBackingInfo {
 
 // Create LLVM globals for all PE data sections
 // Each readable section becomes an LLVM global array initialized with section data
-// global_write_mode controls how writable sections are handled:
-// - Optimize: private linkage, constant (stores may be eliminated)
-// - Lifted: external linkage, mutable (stores persist in output)
-// - OriginalVA: no global created for writable sections (will use inttoptr)
+// global_mode controls memory representation:
+// - Constant: Create globals (used with allocas for full optimization)
+// - Lifted: Create globals (used directly, pointer data resolved)
+// - OriginalVA: Create NO globals (will use inttoptr to original VAs)
 MemoryBackingInfo CreateMemoryGlobals(llvm::Module *module,
                                        const utils::PEInfo &pe_info,
-                                       GlobalWriteMode global_write_mode);
+                                       GlobalMode global_mode);
 
 // Stack memory backing for lifted code
 struct StackBackingInfo {
@@ -89,19 +89,17 @@ struct PointerTracker {
 };
 
 // Lower __remill_read/write_memory_* intrinsics to actual load/store operations
-// Creates local allocas from the backing globals, allowing LLVM's SROA to optimize
-// This approach treats memory as local variables that LLVM can fully optimize
 // If stack_info is provided, also handles stack memory accesses
-// global_write_mode controls how writable sections are handled:
-// - Optimize: use allocas (stores may be eliminated)
-// - Lifted: access globals directly (stores persist)
-// - OriginalVA: emit inttoptr to original VA (stores go to actual address)
+// global_mode controls memory representation:
+// - Constant: Use allocas (copied from globals) for full SROA optimization
+// - Lifted: Use globals directly for all sections
+// - OriginalVA: Use inttoptr for all sections (no globals)
 // Unknown addresses are replaced with undef
 void LowerMemoryIntrinsics(llvm::Module *module,
                            const MemoryBackingInfo &memory_info,
                            const StackBackingInfo *stack_info,
                            llvm::Function *target_func,
-                           GlobalWriteMode global_write_mode);
+                           GlobalMode global_mode);
 
 // NOT USED - Kept for reference only. See MEMORY.md for details.
 // Replace memory intrinsics with concrete constant values

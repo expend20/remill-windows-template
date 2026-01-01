@@ -169,10 +169,13 @@ int main(int argc, char **argv) {
   // Create external call handler
   lifting::ExternalCallHandler external_handler(ctx, config.external_calls);
   external_handler.SetPEInfo(&(*pe_info));
-  external_handler.SetResolvePointerData(config.resolve_pointer_data);
 
-  if (config.resolve_pointer_data) {
-    std::cout << "Pointer data resolution: enabled\n";
+  // In Lifted mode, pointer data is automatically resolved
+  bool resolve_pointers = (config.global_mode == lifting::GlobalMode::Lifted);
+  external_handler.SetResolvePointerData(resolve_pointers);
+
+  if (resolve_pointers) {
+    std::cout << "Pointer data resolution: enabled (Lifted mode)\n";
   }
 
   // Create external function declarations BEFORE lifting
@@ -231,9 +234,9 @@ int main(int argc, char **argv) {
   }
 
   // Create backing globals from PE sections
-  // global_write_mode controls how writable sections are handled
+  // global_mode controls how sections are represented in lifted IR
   auto memory_info = lifting::CreateMemoryGlobals(
-      ctx.GetSemanticsModule(), *pe_info, config.global_write_mode);
+      ctx.GetSemanticsModule(), *pe_info, config.global_mode);
 
   // Extract lifted functions for debugging
   auto extracted_module = utils::ExtractFunctions(
@@ -254,7 +257,7 @@ int main(int argc, char **argv) {
 
   // Lower memory intrinsics
   lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info,
-                                 &stack_info, wrapper, config.global_write_mode);
+                                 &stack_info, wrapper, config.global_mode);
 
   // Extract to clean module for optimization
   // Include external function declarations if present
@@ -268,9 +271,9 @@ int main(int argc, char **argv) {
   // Remove flag computation intrinsics
   optimization::RemoveFlagComputationIntrinsics(opt_module.get());
 
-  // Phase optimization for pointer resolution
+  // Phase optimization for pointer resolution (only in Lifted mode)
   size_t resolved_phase1 = 0;
-  if (config.resolve_pointer_data) {
+  if (resolve_pointers) {
     resolved_phase1 = external_handler.ResolveConstantPointers(opt_module.get());
     if (resolved_phase1 > 0) {
       std::cout << "Resolved " << resolved_phase1 << " pointer argument(s) in phase 1\n";

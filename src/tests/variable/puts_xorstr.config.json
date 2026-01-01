@@ -1,7 +1,7 @@
 {
   "variables": [],
   "return_register": "rax",
-  "resolve_pointer_data": true,
+  "global_mode": "lifted",
   "external_calls": [
     {
       "name": "puts",

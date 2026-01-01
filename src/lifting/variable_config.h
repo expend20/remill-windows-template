@@ -48,11 +48,11 @@ private:
     std::map<uint64_t, const ExternalCallConfig*> by_iat_address_;
 };
 
-// Mode for handling writes to global (.data) sections
-enum class GlobalWriteMode {
-    Optimize,    // Use allocas, stores may be optimized away (for const tests)
-    Lifted,      // Use @__section_.data global, stores persist in lifted code
-    OriginalVA   // Emit stores to original virtual addresses (inttoptr)
+// Mode for how global memory (sections) is represented in lifted IR
+enum class GlobalMode {
+    Constant,    // Use allocas copied from globals - full constant propagation (default)
+    Lifted,      // All sections become mutable globals, pointer data auto-resolved
+    OriginalVA   // No globals, uses inttoptr to original VAs
 };
 
 // Main configuration structure for variable lifting tests
@@ -62,18 +62,11 @@ struct VariableConfig {
     std::string return_register = "rax";
     ExternalCallRegistry external_calls;
 
-    // When true, pointer arguments to external calls are resolved:
-    // - If the pointer points to data in a known PE section, the data is
-    //   copied into an LLVM global constant and the pointer is replaced
-    //   with a reference to that global.
-    // - For string pointers, reads until null terminator.
-    bool resolve_pointer_data = false;
-
-    // How to handle writes to writable sections (.data, .bss):
-    // - Optimize: use allocas, stores may be eliminated (default)
-    // - Lifted: stores go to @__section_.data global in output
-    // - OriginalVA: stores go to original virtual address (e.g., 0x140003000)
-    GlobalWriteMode global_write_mode = GlobalWriteMode::Optimize;
+    // How global memory is represented in lifted IR:
+    // - Constant: Use allocas for full optimization (default)
+    // - Lifted: Mutable globals, pointer data auto-resolved
+    // - OriginalVA: No globals, memory via inttoptr to original VAs
+    GlobalMode global_mode = GlobalMode::Constant;
 
     // Check if this config has variable inputs
     bool HasVariableInputs() const { return !input_registers.empty(); }
