@@ -1,3 +1,4 @@
 build/
 dependencies/
 test_local.cmd
+samples/voices38/output/

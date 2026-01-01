@@ -259,3 +259,29 @@ add_asm_lifting_test(
     ENTRY indirect_call_indexed_offset
     EXPECTED_EXIT_CODE 4919
 )
+
+# =============================================================================
+# ASM Tests - Non-returning calls (non_returning_call.asm)
+# Tests for obfuscation patterns where CALL doesn't return normally
+# =============================================================================
+add_asm_lifting_test(
+    NAME non_ret_call_retf
+    ASM ${CMAKE_SOURCE_DIR}/src/tests/const/non_returning_call.asm
+    ENTRY non_ret_call_retf
+    EXPECTED_EXIT_CODE 4919
+)
+
+# Disabled - uses different pattern (modify ret addr + RET), not yet supported
+# add_asm_lifting_test(
+#     NAME non_ret_call_modify_ret
+#     ASM ${CMAKE_SOURCE_DIR}/src/tests/const/non_returning_call.asm
+#     ENTRY non_ret_call_modify_ret
+#     EXPECTED_EXIT_CODE 4919
+# )
+
+#add_asm_lifting_test(
+#    NAME non_ret_tail_jump
+#    ASM ${CMAKE_SOURCE_DIR}/src/tests/const/non_returning_call.asm
+#    ENTRY non_ret_tail_jump
+#    EXPECTED_EXIT_CODE 4919
+#)

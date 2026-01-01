@@ -269,9 +269,17 @@ bool ControlFlowLifter::LiftPendingBlocks() {
       auto lifter = decoded.instr.GetLifter();
       auto status = lifter->LiftIntoBlock(decoded.instr, block);
       if (status != remill::kLiftedInstruction) {
-        std::cerr << "Failed to lift instruction: " << decoded.instr.Serialize()
-                  << "\n";
-        return false;
+        // Unsupported instruction - likely junk bytes after a noreturn call
+        // Terminate the block as unreachable and continue with other blocks
+        utils::dbg() << "Unsupported instruction at " << llvm::format_hex(addr, 0)
+                     << ": " << decoded.instr.Serialize() << " - treating as unreachable\n";
+        std::cerr << "Warning: Unsupported instruction at 0x" << std::hex << addr << std::dec
+                  << ": " << decoded.instr.Serialize() << " - treating as unreachable\n";
+
+        llvm::IRBuilder<> builder(block);
+        builder.CreateUnreachable();
+        last_instr = nullptr;  // Don't call FinishBlock
+        break;
       }
 
       addr += decoded.size;
@@ -757,9 +765,16 @@ bool ControlFlowLifter::LiftBlocks(const uint8_t *bytes, size_t size,
       auto lifter = decoded.instr.GetLifter();
       auto status = lifter->LiftIntoBlock(decoded.instr, block);
       if (status != remill::kLiftedInstruction) {
-        std::cerr << "Failed to lift instruction: " << decoded.instr.Serialize()
-                  << "\n";
-        return false;
+        // Unsupported instruction - likely junk bytes after a noreturn call
+        utils::dbg() << "Unsupported instruction in helper at " << llvm::format_hex(addr, 0)
+                     << ": " << decoded.instr.Serialize() << " - treating as unreachable\n";
+        std::cerr << "Warning: Unsupported instruction at 0x" << std::hex << addr << std::dec
+                  << ": " << decoded.instr.Serialize() << " - treating as unreachable\n";
+
+        llvm::IRBuilder<> builder(block);
+        builder.CreateUnreachable();
+        last_instr = nullptr;
+        break;
       }
 
       addr += decoded.size;

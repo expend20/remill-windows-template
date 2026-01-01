@@ -80,11 +80,35 @@ void GenerateMainFunction(llvm::Module *module, llvm::Function *test_func,
 }
 
 void PrintUsage(const char *prog) {
-  std::cerr << "Usage: " << prog << " <shellcode.exe> [config.json] [--debug]\n";
+  std::cerr << "Binary Deobfuscator - Lifts x86-64 PE binaries to LLVM IR\n\n";
+  std::cerr << "Usage: " << prog << " <binary.exe|dll> [config.json] [options]\n\n";
+  std::cerr << "Arguments:\n";
+  std::cerr << "  <binary>       PE executable or DLL to lift (required)\n";
+  std::cerr << "  config.json    Variable config file for non-constant inputs (optional)\n\n";
+  std::cerr << "Options:\n";
+  std::cerr << "  --debug        Enable verbose debug output\n";
+  std::cerr << "  --max-iter N   Maximum lifting iterations (default: 15)\n";
+  std::cerr << "  --out DIR      Output directory for generated files (default: current dir)\n\n";
+  std::cerr << "Output files:\n";
+  std::cerr << "  lifted.ll/bc          Raw lifted IR before optimization\n";
+  std::cerr << "  test_optimized.ll/bc  Optimized IR with constants propagated\n";
+  std::cerr << "  test_runner.ll/bc     Executable IR with main() (if config has variable inputs)\n\n";
+  std::cerr << "Example:\n";
+  std::cerr << "  " << prog << " shellcode.exe\n";
+  std::cerr << "  " << prog << " sample.dll --max-iter 1 --debug\n";
 }
 
 int main(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
+
+  // Handle --help/-h
+  if (argc >= 2) {
+    std::string arg1 = argv[1];
+    if (arg1 == "--help" || arg1 == "-h") {
+      PrintUsage(argv[0]);
+      return EXIT_SUCCESS;
+    }
+  }
 
   if (argc < 2) {
     PrintUsage(argv[0]);
@@ -93,16 +117,28 @@ int main(int argc, char **argv) {
 
   const char *shellcode_path = argv[1];
   const char *config_path = nullptr;
+  int max_iterations = 15;  // default
+  std::string output_dir = ".";  // default to current directory
 
-  // Parse arguments: config file (if .json) and --debug flag
+  // Parse arguments: config file (if .json), --debug, --max-iter N, --out DIR
   for (int i = 2; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--debug") {
       utils::g_debug = true;
+    } else if (arg == "--max-iter" && i + 1 < argc) {
+      max_iterations = std::atoi(argv[++i]);
+    } else if (arg == "--out" && i + 1 < argc) {
+      output_dir = argv[++i];
     } else if (arg.size() > 5 && arg.substr(arg.size() - 5) == ".json") {
       config_path = argv[i];
     }
   }
+
+  // Helper to build output path
+  auto out_path = [&output_dir](const std::string &name) {
+    if (output_dir == ".") return name;
+    return output_dir + "/" + name;
+  };
 
   // Parse config (use default if not provided)
   lifting::VariableConfig config;
@@ -201,19 +237,23 @@ int main(int argc, char **argv) {
 
   // Configure iterative lifting
   lifting::IterativeLiftingConfig lift_config;
-  lift_config.max_iterations = 15;
-  std::string input_path = shellcode_path;
-  size_t last_sep = input_path.find_last_of("/\\");
-  if (last_sep != std::string::npos) {
-    lift_config.dump_iterations_dir = input_path.substr(0, last_sep);
-  } else {
-    lift_config.dump_iterations_dir = ".";
-  }
+  lift_config.max_iterations = max_iterations;
+  lift_config.dump_iterations_dir = output_dir;
+  std::cout << "Max iterations: " << max_iterations << "\n";
+  std::cout << "Output directory: " << output_dir << "\n";
   lifter.SetIterativeConfig(lift_config);
 
-  if (!lifter.LiftFunction(code_base, entry_point, text_section->bytes.data(),
-                           text_section->bytes.size(), lifted_func)) {
-    std::cerr << "Failed to lift instructions\n";
+  bool lift_ok = lifter.LiftFunction(code_base, entry_point, text_section->bytes.data(),
+                           text_section->bytes.size(), lifted_func);
+  if (!lift_ok) {
+    std::cerr << "Failed to lift instructions (partial output will be written)\n";
+    // Write raw partial output immediately before further processing might fail
+    auto partial_module = utils::ExtractFunctions(
+        ctx.GetSemanticsModule(),
+        {"lifted_func"},
+        "partial_lifted");
+    utils::WriteModule(partial_module.get(), out_path("partial_lifted"));
+    std::cout << "Written partial output: " << out_path("partial_lifted") << ".ll/.bc\n";
     return EXIT_FAILURE;
   }
 
@@ -243,7 +283,7 @@ int main(int argc, char **argv) {
       ctx.GetSemanticsModule(),
       {"test", "lifted_func"},
       "lifted_code");
-  utils::WriteModule(extracted_module.get(), "lifted");
+  utils::WriteModule(extracted_module.get(), out_path("lifted"));
 
   // First optimization pass
   optimization::OptimizeForCleanIR(ctx.GetSemanticsModule(), wrapper);
@@ -295,7 +335,7 @@ int main(int argc, char **argv) {
   optimization::OptimizeAggressive(opt_module.get());
 
   // Write the optimized module
-  utils::WriteModule(opt_module.get(), "test_optimized");
+  utils::WriteModule(opt_module.get(), out_path("test_optimized"));
 
   // Report external calls if present
   if (config.external_calls.HasExternalCalls()) {
@@ -331,12 +371,12 @@ int main(int argc, char **argv) {
     GenerateMainFunction(opt_module.get(), test_func, config.input_registers);
 
     // Write module with main function
-    utils::WriteModule(opt_module.get(), "test_runner");
-    std::cout << "Written: test_runner.ll, test_runner.bc\n";
+    utils::WriteModule(opt_module.get(), out_path("test_runner"));
+    std::cout << "Written: " << out_path("test_runner") << ".ll/.bc\n";
   }
 
-  std::cout << "Written: test_optimized.ll, test_optimized.bc\n";
-  std::cout << "Written: lifted.ll, lifted.bc\n";
+  std::cout << "Written: " << out_path("test_optimized") << ".ll/.bc\n";
+  std::cout << "Written: " << out_path("lifted") << ".ll/.bc\n";
 
-  return EXIT_SUCCESS;
+  return lift_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
