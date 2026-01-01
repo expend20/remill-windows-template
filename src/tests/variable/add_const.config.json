@@ -1,4 +1,8 @@
 {
   "variables": ["rcx"],
-  "return_register": "rax"
+  "return_register": "rax",
+  "verify": {
+    "max_instructions": 3,
+    "required_immediates": [4919]
+  }
 }

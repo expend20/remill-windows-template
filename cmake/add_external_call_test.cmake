@@ -88,6 +88,12 @@ function(add_external_call_test)
         WORKING_DIRECTORY ${BUILD_DIR}
     )
 
+    # Additional IR verification using variable_ir_checker (if config has "verify" section)
+    add_test(
+        NAME ${ARG_NAME}_ir_verify
+        COMMAND variable_ir_checker ${OPTIMIZED_BC} ${ARG_CONFIG}
+    )
+
     # Optional: If WRAPPER is provided, compile lifted IR + wrapper to executable
     if(ARG_WRAPPER)
         set(LIFTED_OBJ ${BUILD_DIR}/lifted_optimized.obj)

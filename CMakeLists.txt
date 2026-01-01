@@ -76,10 +76,10 @@ else()
     add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/const/main.cpp)
     target_link_libraries(lifter PRIVATE lifting_common)
 
-    # IR checker tool for verifying optimized IR
-    add_executable(ir_checker ${CMAKE_SOURCE_DIR}/src/tools/ir_checker.cpp)
-    target_include_directories(ir_checker PRIVATE ${CMAKE_PREFIX_PATH}/include)
-    target_link_libraries(ir_checker PRIVATE LLVM-Wrapper)
+    # IR checker tool for verifying optimized IR (supports both strict and config-based modes)
+    add_executable(variable_ir_checker ${CMAKE_SOURCE_DIR}/src/tools/variable_ir_checker.cpp)
+    target_include_directories(variable_ir_checker PRIVATE ${CMAKE_PREFIX_PATH}/include)
+    target_link_libraries(variable_ir_checker PRIVATE LLVM-Wrapper)
 
     # Variable lifter executable for tests with variable (non-constant) inputs
     add_executable(variable_lifter ${CMAKE_SOURCE_DIR}/src/tests/variable/main.cpp)

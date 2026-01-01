@@ -89,6 +89,6 @@ function(add_cpp_obfuscated_test)
     # Test: verify optimized IR contains only "ret i32 <expected>"
     add_test(
         NAME ${ARG_NAME}_ir_check
-        COMMAND ir_checker ${OPTIMIZED_BC} ${ARG_EXPECTED_EXIT_CODE}
+        COMMAND variable_ir_checker ${OPTIMIZED_BC} ${ARG_EXPECTED_EXIT_CODE}
     )
 endfunction()

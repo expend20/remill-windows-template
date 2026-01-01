@@ -7,5 +7,10 @@
       "name": "puts",
       "args": ["ptr"]
     }
-  ]
+  ],
+  "verify": {
+    "max_instructions": 10,
+    "required_calls": ["puts"],
+    "required_string": "Hello"
+  }
 }

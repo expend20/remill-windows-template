@@ -42,7 +42,8 @@
       "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_xorstr.config.json --debug)",
       "Bash(git checkout:*)",
       "Bash(python3:*)",
-      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_xorstr.config.json)"
+      "Bash(../../../variable_lifter shellcode.exe E:/temp/remill-windows-template/src/tests/variable/puts_xorstr.config.json)",
+      "Bash(E:/temp/remill-windows-template/build/variable_ir_checker.exe:*)"
     ]
   }
 }

@@ -98,4 +98,10 @@ function(add_variable_test)
                 -P ${CMAKE_SOURCE_DIR}/cmake/run_variable_tests.cmake
         )
     endif()
+
+    # IR verification test: check bitcode cleanliness based on config "verify" section
+    add_test(
+        NAME ${ARG_NAME}_ir_check
+        COMMAND variable_ir_checker ${OPTIMIZED_BC} ${ARG_CONFIG}
+    )
 endfunction()
