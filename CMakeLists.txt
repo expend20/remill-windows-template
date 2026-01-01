@@ -73,14 +73,13 @@ else()
     include(add_external_call_test)
 
     # Unified lifter executable for all tests (const and variable modes)
-    add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/main.cpp)
+    add_executable(lifter ${CMAKE_SOURCE_DIR}/src/tests/lifter.cpp)
     target_link_libraries(lifter PRIVATE lifting_common)
 
     # IR checker tool for verifying optimized IR (supports both strict and config-based modes)
     add_executable(variable_ir_checker ${CMAKE_SOURCE_DIR}/src/tools/variable_ir_checker.cpp)
     target_include_directories(variable_ir_checker PRIVATE ${CMAKE_PREFIX_PATH}/include)
     target_link_libraries(variable_ir_checker PRIVATE LLVM-Wrapper)
-
 
     # Pluto obfuscation passes (static library) and obfuscator tool
     # This replaces the llvm-ob-passes plugin approach to avoid ODR violations
@@ -89,471 +88,53 @@ else()
     target_include_directories(obfuscator PRIVATE ${CMAKE_PREFIX_PATH}/include)
     target_link_libraries(obfuscator PRIVATE pluto_passes LLVM-Wrapper)
 
-    # Basic return value tests (basic_return.asm)
-    add_asm_lifting_test(
-        NAME basic_mov_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/basic_return.asm
-        ENTRY mov_const
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME basic_alu_const
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/basic_return.asm
-        ENTRY alu_const
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Global memory access tests (global_memory.asm)
-    add_asm_lifting_test(
-        NAME global_bytewise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY bytewise_write
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_unaligned_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY unaligned_read
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_wordwise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY wordwise_write
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_qword_access
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY qword_access
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_dword_to_bytes
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY dword_to_bytes
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_zero_extend_byte
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY zero_extend_byte
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_zero_extend_word
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY zero_extend_word
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_sign_extend_byte
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY sign_extend_byte
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_read_modify_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY read_modify_write
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_read_initialized
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY read_initialized
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_array_const_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY array_const_index
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_array_reg_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY array_reg_index
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_unaligned_qword
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY unaligned_qword
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_multi_global
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY multi_global
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME global_overlapping_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/global_memory.asm
-        ENTRY overlapping_write
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Stack memory access tests (stack_memory.asm)
-    add_asm_lifting_test(
-        NAME stack_bytewise_write
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/stack_memory.asm
-        ENTRY bytewise_write
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME stack_unaligned_read
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/stack_memory.asm
-        ENTRY unaligned_read
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Cross-section memory tests (rdata_to_stack.asm)
-    add_asm_lifting_test(
-        NAME rdata_to_stack
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/rdata_to_stack.asm
-        ENTRY rdata_to_stack
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Loop handling tests (loops.asm)
-    add_asm_lifting_test(
-        NAME loop_sum
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/loops.asm
-        ENTRY sum_loop
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Direct branch tests (direct_branch.asm)
-    add_asm_lifting_test(
-        NAME call_direct
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
-        ENTRY call_helper
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME jmp_direct
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
-        ENTRY direct_jmp
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME jmp_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
-        ENTRY jmp_chain
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME call_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/direct_branch.asm
-        ENTRY call_chain
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    # Indirect branch tests (indirect_branch.asm)
-    add_asm_lifting_test(
-        NAME indirect_register_jmp
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY register_jmp
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_push_ret
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY push_ret
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_jump_table
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY jump_table
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_jump_table_index
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY jump_table_index
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_jmp_chain
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY indirect_jmp_chain
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_call_register
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY indirect_call_register
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_call_memory
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY indirect_call_memory
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_call_indexed
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY indirect_call_indexed
-        EXPECTED_EXIT_CODE 4919
-    )
-
-    add_asm_lifting_test(
-        NAME indirect_call_indexed_offset
-        ASM ${CMAKE_SOURCE_DIR}/src/tests/const/indirect_branch.asm
-        ENTRY indirect_call_indexed_offset
-        EXPECTED_EXIT_CODE 4919
-    )
+    # ASM lifting tests (only need ml64/link)
+    # Test definitions in: src/tests/const/asm_tests.cmake
+    include(${CMAKE_SOURCE_DIR}/src/tests/const/asm_tests.cmake)
 
     # Variable input tests (non-constant register values)
     if(LLC_EXECUTABLE)
         message(STATUS "Found llc: ${LLC_EXECUTABLE}")
-        add_variable_test(
-            NAME variable_add_const
-            ASM ${CMAKE_SOURCE_DIR}/src/tests/variable/add_const.asm
-            CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/add_const.config.json
-            ENTRY test_proc
-            TESTS "0:4919|100:5019|1000:5919"
-        )
+        # Test definitions in: src/tests/variable/variable_tests.cmake
+        include(${CMAKE_SOURCE_DIR}/src/tests/variable/variable_tests.cmake)
     else()
         message(STATUS "llc not found, variable tests will not be available")
     endif()
 
     # External call tests (functions that call external APIs like puts)
-    add_external_call_test(
-        NAME external_puts
-        CPP ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_global_const.cpp
-        CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_global_const.config.json
-        ENTRY test_proc
-        EXPECTED_EXIT_CODE 4919
-        WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
-    )
-
-    add_external_call_test(
-        NAME external_puts_stack
-        CPP ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_stack.cpp
-        CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_stack.config.json
-        ENTRY test_proc
-        EXPECTED_EXIT_CODE 4919
-        WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
-    )
-
-    add_external_call_test(
-        NAME external_puts_xorstr
-        CPP ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_xorstr.cpp
-        CONFIG ${CMAKE_SOURCE_DIR}/src/tests/variable/puts_xorstr.config.json
-        ENTRY test_proc
-        EXPECTED_EXIT_CODE 4919
-        WRAPPER ${CMAKE_SOURCE_DIR}/src/tests/variable/main_wrapper.cpp
-    )
+    # Test definitions in: src/tests/variable/external_call_tests.cmake
+    include(${CMAKE_SOURCE_DIR}/src/tests/variable/external_call_tests.cmake)
 
     if(CLANG_CL_EXECUTABLE)
         message(STATUS "Found clang-cl: ${CLANG_CL_EXECUTABLE}")
 
-        add_cpp_lifting_test(
-            NAME ret_const
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/ret_const.cpp
-            ENTRY test_me
-            EXPECTED_EXIT_CODE 4919
-        )
+        # C++ lifting tests
+        # Test definitions in: src/tests/const/cpp_tests.cmake
+        include(${CMAKE_SOURCE_DIR}/src/tests/const/cpp_tests.cmake)
 
-        add_cpp_lifting_test(
-            NAME global_var
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/global_var.cpp
-            ENTRY test_me
-            EXPECTED_EXIT_CODE 4919
-        )
-
-        add_cpp_lifting_test(
-            NAME xtea_roundtrip
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_roundtrip.cpp
-            ENTRY test_me
-            EXPECTED_EXIT_CODE 4919
-        )
-
-        # NOTE: xtea_noinline test - uses function inlining approach
-        # See FUNCTION_INLINING.md for details
-        add_cpp_lifting_test(
-            NAME xtea_noinline
-            CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_noinline.cpp
-            ENTRY test_me
-            EXPECTED_EXIT_CODE 4919
-        )
-
-        # Obfuscation pass tests (require opt and llvm-ob-passes)
+        # Obfuscation pass tests (require opt)
         if(LLVM_OPT_EXECUTABLE)
             message(STATUS "Found opt: ${LLVM_OPT_EXECUTABLE}")
 
             # Z3 bin directory for runtime DLL loading (libz3.dll)
-            # Derive from LLVM_Z3_INSTALL_DIR or use superbuild location
             if(LLVM_Z3_INSTALL_DIR)
                 set(Z3_BIN_DIR "${LLVM_Z3_INSTALL_DIR}/bin" CACHE PATH "Z3 bin directory")
             else()
-                # Default to superbuild location
                 list(GET CMAKE_PREFIX_PATH 0 _first_prefix)
                 set(Z3_BIN_DIR "${_first_prefix}/bin" CACHE PATH "Z3 bin directory")
             endif()
             message(STATUS "Z3 bin directory: ${Z3_BIN_DIR}")
 
-            # Note: llvm-ob-passes plugin is replaced by pluto_passes static library
-            # to avoid ODR violations. The obfuscator tool is used instead of opt with plugin.
-            # add_subdirectory(src/deps/llvm-ob-passes)
-
             include(add_cpp_obfuscated_test)
-
-            add_cpp_obfuscated_test(
-                NAME global_var_pluto
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/global_var_pluto.cpp
-                ENTRY test_me
-                PASSES "pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution,pluto-substitution"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            add_cpp_obfuscated_test(
-                NAME xtea_substitution
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_substitution.cpp
-                ENTRY test_me
-                PASSES "pluto-substitution"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            add_cpp_obfuscated_test(
-                NAME xtea_flattening
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_flattening.cpp
-                ENTRY test_me
-                PASSES "pluto-flattening"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            # DISABLED: bogus-control-flow creates large stack frames requiring __chkstk
-            # which is not available with custom entry point (no CRT)
-            # add_cpp_obfuscated_test(
-            #     NAME xtea_bogus_cfg
-            #     CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_bogus_cfg.cpp
-            #     ENTRY test_me
-            #     PASSES "pluto-bogus-control-flow"
-            #     EXPECTED_EXIT_CODE 4919
-            # )
-
-            add_cpp_obfuscated_test(
-                NAME xtea_global_encryption
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_global_encryption.cpp
-                ENTRY test_me
-                PASSES "pluto-global-encryption"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            add_cpp_obfuscated_test(
-                NAME xtea_indirect_call
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_indirect_call.cpp
-                ENTRY test_me
-                PASSES "pluto-indirect-call"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            add_cpp_obfuscated_test(
-                NAME xtea_mba
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_mba.cpp
-                ENTRY test_me
-                PASSES "pluto-mba-obfuscation"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            # All Pluto passes combined (except MBA which crashes when combined, and
-            # bogus-control-flow which creates large stack frames requiring __chkstk)
-            # Note: module passes (indirect-call, global-encryption) need to be separated
-            # from function passes using module(function(...)) wrapper syntax
-            add_cpp_obfuscated_test(
-                NAME xtea_all_pluto
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/const/xtea_all_pluto.cpp
-                ENTRY test_me
-                PASSES "module(function(pluto-substitution,pluto-flattening)),pluto-indirect-call,pluto-global-encryption"
-                        EXPECTED_EXIT_CODE 4919
-            )
-
-            # Pluto-only tests (verify obfuscation preserves semantics without lifting)
-            # These tests compile and run obfuscated code directly, keeping input.ll
-            # and obfuscated.ll for inspection in build/tests/pluto/<name>/
             include(add_pluto_test)
 
-            add_pluto_test(
-                NAME pluto_substitution
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-substitution"
-                EXPECTED_EXIT_CODE 4919
-            )
+            # Obfuscated lifting tests
+            # Test definitions in: src/tests/const/obfuscated_tests.cmake
+            include(${CMAKE_SOURCE_DIR}/src/tests/const/obfuscated_tests.cmake)
 
-            add_pluto_test(
-                NAME pluto_flattening
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-flattening"
-                EXPECTED_EXIT_CODE 4919
-            )
-
-            add_pluto_test(
-                NAME pluto_bogus_cfg
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-bogus-control-flow"
-                EXPECTED_EXIT_CODE 4919
-            )
-
-            add_pluto_test(
-                NAME pluto_global_encryption
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-global-encryption"
-                EXPECTED_EXIT_CODE 4919
-            )
-
-            add_pluto_test(
-                NAME pluto_indirect_call
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-indirect-call"
-                EXPECTED_EXIT_CODE 4919
-            )
-
-            add_pluto_test(
-                NAME pluto_mba
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "pluto-mba-obfuscation"
-                EXPECTED_EXIT_CODE 4919
-            )
-
-            add_pluto_test(
-                NAME pluto_all
-                CPP ${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/xtea_roundtrip.cpp
-                PASSES "module(function(pluto-substitution,pluto-flattening,pluto-bogus-control-flow,pluto-mba-obfuscation)),pluto-indirect-call,pluto-global-encryption"
-                EXPECTED_EXIT_CODE 4919
-            )
-
+            # Pluto-only tests (verify obfuscation preserves semantics without lifting)
+            # Test definitions in: src/tests/obfuscation/pluto/pluto_tests.cmake
+            include(${CMAKE_SOURCE_DIR}/src/tests/obfuscation/pluto/pluto_tests.cmake)
         else()
             message(STATUS "opt not found, obfuscation tests will not be available")
         endif()
