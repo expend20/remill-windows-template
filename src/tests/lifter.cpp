@@ -231,7 +231,9 @@ int main(int argc, char **argv) {
   }
 
   // Create backing globals from PE sections
-  auto memory_info = lifting::CreateMemoryGlobals(ctx.GetSemanticsModule(), *pe_info);
+  // global_write_mode controls how writable sections are handled
+  auto memory_info = lifting::CreateMemoryGlobals(
+      ctx.GetSemanticsModule(), *pe_info, config.global_write_mode);
 
   // Extract lifted functions for debugging
   auto extracted_module = utils::ExtractFunctions(
@@ -252,7 +254,7 @@ int main(int argc, char **argv) {
 
   // Lower memory intrinsics
   lifting::LowerMemoryIntrinsics(ctx.GetSemanticsModule(), memory_info,
-                                 &stack_info, wrapper);
+                                 &stack_info, wrapper, config.global_write_mode);
 
   // Extract to clean module for optimization
   // Include external function declarations if present

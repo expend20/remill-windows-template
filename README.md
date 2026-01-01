@@ -129,7 +129,7 @@ llvm-objdump -d build/lifted_combined.o | grep -A 20 "lifted_mov_rcx"
 │   └── xed.cmake               # XED build config
 └── src/
     └── helloworld/
-        ├── main.cpp            # Lifter - generates IR
+        ├── lifter.cpp          # Lifter - generates IR
         ├── runtime.ll          # Remill intrinsic stubs
         └── test_harness.cpp    # Test executable
 ```

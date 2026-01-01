@@ -120,6 +120,22 @@ std::optional<VariableConfig> ParseVariableConfig(const std::string& config_path
         config.resolve_pointer_data = *resolve;
     }
 
+    // Parse "global_write_mode": "optimize" | "lifted" | "original_va"
+    if (auto mode = root->getString("global_write_mode")) {
+        std::string mode_str = mode->str();
+        if (mode_str == "optimize") {
+            config.global_write_mode = GlobalWriteMode::Optimize;
+        } else if (mode_str == "lifted") {
+            config.global_write_mode = GlobalWriteMode::Lifted;
+        } else if (mode_str == "original_va") {
+            config.global_write_mode = GlobalWriteMode::OriginalVA;
+        } else {
+            std::cerr << "Unknown global_write_mode: " << mode_str << "\n";
+            std::cerr << "Valid values: optimize, lifted, original_va\n";
+            return std::nullopt;
+        }
+    }
+
     return config;
 }
 

@@ -1,0 +1,10 @@
+{
+  "variables": ["rcx"],
+  "return_register": "rax",
+  "global_write_mode": "lifted",
+  "verify": {
+    "max_instructions": 3,
+    "required_immediates": [4919],
+    "required_globals": ["__section_.data"]
+  }
+}

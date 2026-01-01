@@ -48,6 +48,13 @@ private:
     std::map<uint64_t, const ExternalCallConfig*> by_iat_address_;
 };
 
+// Mode for handling writes to global (.data) sections
+enum class GlobalWriteMode {
+    Optimize,    // Use allocas, stores may be optimized away (for const tests)
+    Lifted,      // Use @__section_.data global, stores persist in lifted code
+    OriginalVA   // Emit stores to original virtual addresses (inttoptr)
+};
+
 // Main configuration structure for variable lifting tests
 // Supports both variable register inputs and external function calls
 struct VariableConfig {
@@ -61,6 +68,12 @@ struct VariableConfig {
     //   with a reference to that global.
     // - For string pointers, reads until null terminator.
     bool resolve_pointer_data = false;
+
+    // How to handle writes to writable sections (.data, .bss):
+    // - Optimize: use allocas, stores may be eliminated (default)
+    // - Lifted: stores go to @__section_.data global in output
+    // - OriginalVA: stores go to original virtual address (e.g., 0x140003000)
+    GlobalWriteMode global_write_mode = GlobalWriteMode::Optimize;
 
     // Check if this config has variable inputs
     bool HasVariableInputs() const { return !input_registers.empty(); }

@@ -10,6 +10,9 @@
 // - "required_calls": ["puts", ...] (fail if call not present)
 // - "required_immediates": [72, 101, ...] (fail if constant not found)
 // - "required_string": "Hello" (auto-converts to required_immediates)
+// - "required_globals": ["__section_.data", ...] (fail if global not present)
+// - "require_inttoptr": true (fail if no inttoptr instruction found)
+// - "forbid_globals": true (fail if any global variables exist)
 //
 // If config has no "verify" section, defaults to strict mode.
 
@@ -36,6 +39,9 @@ struct VerifyConfig {
     int max_instructions = -1;          // -1 means no limit
     std::vector<std::string> required_calls;
     std::set<int64_t> required_immediates;
+    std::vector<std::string> required_globals;
+    bool require_inttoptr = false;      // Require at least one inttoptr instruction
+    bool forbid_globals = false;        // Forbid any global variables (except external decls)
 };
 
 // Check if string is a valid integer
@@ -106,6 +112,25 @@ bool parseVerifyConfig(const std::string& config_path, VerifyConfig& verify) {
         }
     }
 
+    // Parse required_globals (global variable names)
+    if (auto* globals = verify_obj->getArray("required_globals")) {
+        for (const auto& g : *globals) {
+            if (auto str = g.getAsString()) {
+                verify.required_globals.push_back(str->str());
+            }
+        }
+    }
+
+    // Parse require_inttoptr
+    if (auto val = verify_obj->getBoolean("require_inttoptr")) {
+        verify.require_inttoptr = *val;
+    }
+
+    // Parse forbid_globals
+    if (auto val = verify_obj->getBoolean("forbid_globals")) {
+        verify.forbid_globals = *val;
+    }
+
     return true;
 }
 
@@ -135,7 +160,10 @@ int main(int argc, char *argv[]) {
     if (!verify.strict_mode &&
         verify.max_instructions < 0 &&
         verify.required_calls.empty() &&
-        verify.required_immediates.empty()) {
+        verify.required_immediates.empty() &&
+        verify.required_globals.empty() &&
+        !verify.require_inttoptr &&
+        !verify.forbid_globals) {
         llvm::outs() << "No verification rules in config, skipping checks\n";
         return 0;
     }
@@ -168,6 +196,7 @@ int main(int argc, char *argv[]) {
     std::set<std::string> found_calls;
     std::set<int64_t> found_immediates;
     llvm::ReturnInst *ret_inst = nullptr;
+    bool found_inttoptr = false;
 
     // Also scan global variables for string constants
     for (auto &gv : module->globals()) {
@@ -207,7 +236,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            // Track constant integers in operands
+            // Track constant integers in operands (including inttoptr constants)
             for (auto &op : inst.operands()) {
                 if (auto *const_int = llvm::dyn_cast<llvm::ConstantInt>(op.get())) {
                     int64_t val = const_int->getSExtValue();
@@ -222,6 +251,13 @@ int main(int argc, char *argv[]) {
                         if (byte_val != 0) {  // Skip null bytes
                             found_immediates.insert(byte_val);
                         }
+                    }
+                }
+
+                // Check for inttoptr constant expressions in operands
+                if (auto *ce = llvm::dyn_cast<llvm::ConstantExpr>(op.get())) {
+                    if (ce->getOpcode() == llvm::Instruction::IntToPtr) {
+                        found_inttoptr = true;
                     }
                 }
             }
@@ -319,6 +355,36 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Check 4: Required globals
+    for (const auto& required_global : verify.required_globals) {
+        auto *gv = module->getGlobalVariable(required_global);
+        if (!gv) {
+            llvm::errs() << "FAIL: Required global '@" << required_global << "' not found\n";
+            success = false;
+        }
+    }
+
+    // Check 5: Require inttoptr
+    if (verify.require_inttoptr && !found_inttoptr) {
+        llvm::errs() << "FAIL: Required inttoptr instruction not found\n";
+        llvm::errs() << "Function body:\n";
+        test_func->print(llvm::errs());
+        success = false;
+    }
+
+    // Check 6: Forbid globals
+    if (verify.forbid_globals) {
+        for (auto &gv : module->globals()) {
+            // Skip external declarations (like function declarations)
+            if (!gv.hasInitializer()) {
+                continue;
+            }
+            llvm::errs() << "FAIL: Global variable '@" << gv.getName().str()
+                         << "' found but globals are forbidden\n";
+            success = false;
+        }
+    }
+
     if (success) {
         llvm::outs() << "SUCCESS: All verification checks passed\n";
         if (verify.max_instructions >= 0) {
@@ -330,6 +396,15 @@ int main(int argc, char *argv[]) {
         }
         if (!verify.required_immediates.empty()) {
             llvm::outs() << "  - Required immediates: all found\n";
+        }
+        if (!verify.required_globals.empty()) {
+            llvm::outs() << "  - Required globals: all found\n";
+        }
+        if (verify.require_inttoptr) {
+            llvm::outs() << "  - Required inttoptr: found\n";
+        }
+        if (verify.forbid_globals) {
+            llvm::outs() << "  - No globals: verified\n";
         }
         return 0;
     }
