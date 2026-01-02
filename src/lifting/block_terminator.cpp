@@ -125,50 +125,24 @@ llvm::SwitchInst *BlockTerminator::FinishBlock(
     }
 
     case remill::Instruction::kCategoryDirectFunctionCall: {
+      // Option C: Don't call helper functions - branch directly to target block
+      // Remill's CALL semantics have already pushed return address to stack
+      // RET dispatch switch will handle routing back to the correct caller
       uint64_t target = last_instr.instr.branch_taken_pc;
 
-      auto helper_it = helper_functions.find(target);
-      if (helper_it != helper_functions.end()) {
-        auto *helper_func = helper_it->second;
+      // Suppress unused parameter warning
+      (void)helper_functions;
 
-        // Get current state and memory
-        llvm::Value *state = nullptr;
-        llvm::Value *memory = nullptr;
-        llvm::AllocaInst *memory_alloca = nullptr;
-        for (auto &inst : block->getParent()->getEntryBlock()) {
-          if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
-            if (alloca->getName() == "STATE") {
-              state = builder.CreateLoad(builder.getPtrTy(), alloca);
-            } else if (alloca->getName() == "MEMORY") {
-              memory_alloca = alloca;
-              memory = builder.CreateLoad(builder.getPtrTy(), alloca);
-            }
-          }
-        }
-
-        if (state && memory && memory_alloca) {
-          auto *target_pc = builder.getInt64(target);
-          auto *result = builder.CreateCall(helper_func, {state, target_pc, memory});
-          builder.CreateStore(result, memory_alloca);
-
-          if (sameFunction(next_addr)) {
-            builder.CreateBr(getBlock(next_addr));
-          } else {
-            builder.CreateRet(result);
-          }
-        } else {
-          if (sameFunction(next_addr)) {
-            builder.CreateBr(getBlock(next_addr));
-          } else {
-            builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
-          }
-        }
+      if (sameFunction(target)) {
+        builder.CreateBr(getBlock(target));
+        utils::dbg() << "CALL at " << llvm::format_hex(block_addr, 0)
+                     << " -> branch to " << llvm::format_hex(target, 0) << "\n";
       } else {
-        if (sameFunction(next_addr)) {
-          builder.CreateBr(getBlock(next_addr));
-        } else {
-          builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
-        }
+        // Target not discovered yet - will be handled in next iteration
+        builder.CreateRet(remill::LoadMemoryPointer(block, *intrinsics));
+        utils::dbg() << "CALL at " << llvm::format_hex(block_addr, 0)
+                     << " -> target " << llvm::format_hex(target, 0)
+                     << " not in function, returning\n";
       }
       break;
     }

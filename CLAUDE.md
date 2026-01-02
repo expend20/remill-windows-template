@@ -28,6 +28,20 @@ Then build main project: cmake -B build -G Ninja -DCMAKE_PREFIX_PATH=$(PWD)/depe
 
 Run the tests with: ctest --test-dir build -V
 
+## Before starting work
+
+* Always in plan mode to make a plan
+* After getting the plan, make sure you write the plan to `$(pwd)/.claude/tasks/MEANINGFUL_TASK_NAME.md`.
+* The plan should be a detailed implementation plan and the reasoning behind it, as well as tasks broken down.
+* If the task requires external knowledge or certain packages, also research to get the latest knowledge (use Task tool for research).
+* Don’t over-plan it; always think MVP.
+* Once you write the plan, first ask me to review it. Do not continue until I approve the plan.
+
+## While implementing
+
+* You should update the plan as you work.
+* After you complete tasks in the plan, you should update and append detailed descriptions of the changes you made, so following tasks can be easily handed over to other engineers.
+
 ## References
 
 Warning! Never references the code frome @NOT_INTEGRATED directory, only use it to peer inside to understand how it works.

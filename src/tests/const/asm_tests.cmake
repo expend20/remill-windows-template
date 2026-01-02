@@ -285,3 +285,14 @@ add_asm_lifting_test(
 #    ENTRY non_ret_tail_jump
 #    EXPECTED_EXIT_CODE 4919
 #)
+
+# =============================================================================
+# ASM Tests - Call with loop (call_with_loop.asm)
+# Isolates the issue where helper functions with loops can't be properly optimized
+# =============================================================================
+add_asm_lifting_test(
+    NAME call_with_loop
+    ASM ${CMAKE_SOURCE_DIR}/src/tests/const/call_with_loop.asm
+    ENTRY call_with_loop
+    EXPECTED_EXIT_CODE 4919
+)

@@ -189,7 +189,7 @@ void BlockDecoder::DiscoverBlocksFromEntry(
       }
 
       case remill::Instruction::kCategoryDirectFunctionCall: {
-        // Add call target and return address
+        // Add call target to worklist
         uint64_t target = decoded.instr.branch_taken_pc;
         if (IsValidCodeAddress(target) && !visited.count(target) &&
             !iter_state.lifted_blocks.count(target)) {
@@ -197,12 +197,14 @@ void BlockDecoder::DiscoverBlocksFromEntry(
           visited.insert(target);
           call_targets.insert(target);
         }
+        // Option C: Also add return address to worklist
+        // Since all code is in one function, return address is reachable via RET dispatch
         if (IsValidCodeAddress(next_addr) && !visited.count(next_addr) &&
             !iter_state.lifted_blocks.count(next_addr)) {
           worklist.push(next_addr);
           visited.insert(next_addr);
         }
-        // Track call return address
+        // Track call return address for RET dispatch switch population
         call_return_addrs[last_addr] = next_addr;
         break;
       }

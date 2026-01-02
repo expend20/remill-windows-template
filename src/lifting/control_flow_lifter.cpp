@@ -301,10 +301,19 @@ bool ControlFlowLifter::LiftPendingBlocks() {
   return true;
 }
 
-std::set<uint64_t> ControlFlowLifter::ResolveIndirectJumps() {
+IndirectJumpResolution ControlFlowLifter::ResolveIndirectJumps() {
   IndirectJumpResolver resolver(pe_info_);
 
-  auto find_block_end = [this](uint64_t addr) { return FindBlockEnd(addr); };
+  // Return the actual instruction end, not just the next block start
+  auto find_block_end = [this](uint64_t block_addr) -> uint64_t {
+    uint64_t region_end = FindBlockEnd(block_addr);
+    uint64_t last_addr = GetLastInstrAddr(block_addr, region_end);
+    auto instr_it = instructions_.find(last_addr);
+    if (instr_it != instructions_.end()) {
+      return last_addr + instr_it->second.size;
+    }
+    return region_end;
+  };
   auto get_block_owner = [this](uint64_t addr) -> uint64_t {
     auto it = block_owner_.find(addr);
     return (it != block_owner_.end()) ? it->second : 0;
@@ -502,6 +511,32 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
     // Phase 1b: Identify external-only helpers (call targets that only contain jmp [IAT])
     IdentifyExternalOnlyHelpers();
 
+    // Phase 1c: Queue return addresses for calls to external-only helpers
+    // External calls are known to return, so their return addresses must be lifted
+    for (const auto &[call_addr, ret_addr] : call_return_addrs_) {
+      // Find what function this call targets
+      auto instr_it = instructions_.find(call_addr);
+      if (instr_it == instructions_.end()) continue;
+
+      const auto &decoded = instr_it->second;
+      if (decoded.instr.category != remill::Instruction::kCategoryDirectFunctionCall) continue;
+
+      uint64_t target = decoded.instr.branch_taken_pc;
+
+      // Check if this call targets an external-only helper
+      if (external_only_helper_configs_.count(target)) {
+        // External calls always return - queue the return address
+        if (IsValidCodeAddress(ret_addr) &&
+            !iter_state_.lifted_blocks.count(ret_addr) &&
+            !block_starts_.count(ret_addr)) {
+          block_starts_.insert(ret_addr);
+          iter_state_.block_discovery_iteration[ret_addr] = iteration;
+          utils::dbg() << "Queued return address " << llvm::format_hex(ret_addr, 0)
+                       << " for external call to " << external_only_helper_configs_[target]->name << "\n";
+        }
+      }
+    }
+
     // Phase 2: Assign blocks to functions
     FunctionSplitter::AssignBlocksToFunctions(
         block_starts_, call_targets_, instructions_,
@@ -514,39 +549,102 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
     // Phase 4: Create LLVM basic blocks
     CreateBasicBlocksIncremental();
 
-    // Phase 4b: Update switches with newly discovered targets
+    // Phase 5: Lift pending blocks (creates RET switches during lifting)
+    if (!LiftPendingBlocks()) {
+      return false;
+    }
+
+    // Phase 5b: Update switches with discovered targets
+    // Must run AFTER LiftPendingBlocks since that's where switches are created
+    //
+    // For RET dispatch switches: only add CALL return addresses (from call_return_addrs_)
+    // For indirect jump/call switches: add all blocks in the same function
     for (auto &[jump_block_addr, sw] : iter_state_.unresolved_indirect_jumps) {
       if (!sw) continue;
+
+      auto *dispatch_block = sw->getParent();
+      std::string dispatch_name = dispatch_block->getName().str();
+      bool is_ret_dispatch = (dispatch_name.find("ret_dispatch") != std::string::npos);
 
       uint64_t owner = block_owner_.count(jump_block_addr) ? block_owner_[jump_block_addr] : 0;
       auto *sw_func = sw->getFunction();
       auto *entry_block = &sw_func->getEntryBlock();
 
-      for (auto &[target_addr, target_bb] : blocks_) {
-        if (!target_bb) continue;
-        if (target_bb == entry_block) continue;
-
-        uint64_t target_owner = block_owner_.count(target_addr) ? block_owner_[target_addr] : 0;
-        if (target_owner != owner) continue;
-
-        bool case_exists = false;
-        for (auto case_it : sw->cases()) {
-          if (case_it.getCaseValue()->getZExtValue() == target_addr) {
-            case_exists = true;
-            break;
+      if (is_ret_dispatch) {
+        // For RET dispatch, only add return address for the CALL that targets
+        // the function containing this RET.
+        //
+        // Find the "virtual function" containing jump_block_addr:
+        // - If jump_block_addr >= some call_target, it's in that function
+        // - The return address for that CALL should be added as a case
+        //
+        // For nested calls, we find the innermost function containing the RET.
+        uint64_t containing_func = 0;  // 0 means entry function
+        for (uint64_t call_target : call_targets_) {
+          if (call_target <= jump_block_addr && call_target > containing_func) {
+            containing_func = call_target;
           }
         }
 
-        if (!case_exists) {
-          auto &ctx = sw->getContext();
-          sw->addCase(llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), target_addr), target_bb);
+        // Find all CALLs that target this function
+        for (const auto &[call_addr, ret_addr] : call_return_addrs_) {
+          auto call_instr_it = instructions_.find(call_addr);
+          if (call_instr_it == instructions_.end()) continue;
+          uint64_t call_target = call_instr_it->second.instr.branch_taken_pc;
+
+          // Only add case if this CALL targets the function containing the RET
+          if (call_target != containing_func) continue;
+
+          if (!blocks_.count(ret_addr)) continue;
+          auto *target_bb = blocks_[ret_addr];
+          if (!target_bb) continue;
+          if (target_bb == entry_block) continue;
+
+          // Don't add a case for the same block as the RET - this creates a self-loop
+          if (ret_addr == jump_block_addr) continue;
+
+          bool case_exists = false;
+          for (auto case_it : sw->cases()) {
+            if (case_it.getCaseValue()->getZExtValue() == ret_addr) {
+              case_exists = true;
+              break;
+            }
+          }
+
+          if (!case_exists) {
+            auto &ctx = sw->getContext();
+            sw->addCase(llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), ret_addr), target_bb);
+            utils::dbg() << "Added RET case " << llvm::format_hex(ret_addr, 0)
+                         << " to dispatch at " << llvm::format_hex(jump_block_addr, 0)
+                         << " (in func " << llvm::format_hex(containing_func, 0) << ")\n";
+          }
+        }
+      } else {
+        // For indirect jump/call dispatch, add all blocks in same function
+        for (auto &[target_addr, target_bb] : blocks_) {
+          if (!target_bb) continue;
+          if (target_bb == entry_block) continue;
+          if (target_addr == jump_block_addr) continue;
+
+          uint64_t target_owner = block_owner_.count(target_addr) ? block_owner_[target_addr] : 0;
+          if (target_owner != owner) continue;
+
+          bool case_exists = false;
+          for (auto case_it : sw->cases()) {
+            if (case_it.getCaseValue()->getZExtValue() == target_addr) {
+              case_exists = true;
+              break;
+            }
+          }
+
+          if (!case_exists) {
+            auto &ctx = sw->getContext();
+            sw->addCase(llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), target_addr), target_bb);
+            utils::dbg() << "Added case " << llvm::format_hex(target_addr, 0)
+                         << " to dispatch at " << llvm::format_hex(jump_block_addr, 0) << "\n";
+          }
         }
       }
-    }
-
-    // Phase 5: Lift pending blocks
-    if (!LiftPendingBlocks()) {
-      return false;
     }
 
     // Phase 5b: Dump iteration IR if requested
@@ -582,12 +680,60 @@ bool ControlFlowLifter::LiftFunction(uint64_t code_base, uint64_t entry_point,
     }
 
     // Phase 6: Resolve indirect jumps
-    std::set<uint64_t> new_targets = ResolveIndirectJumps();
+    auto resolution = ResolveIndirectJumps();
 
-    utils::dbg() << "Found " << new_targets.size() << " new targets from "
+    utils::dbg() << "Found " << resolution.new_targets.size() << " new targets from "
                  << "resolved indirect jumps\n";
 
-    for (uint64_t target : new_targets) {
+    // Phase 6b: Merge new RET dispatch cases into pending list
+    for (const auto &[ret_block_addr, targets] : resolution.ret_dispatch_cases) {
+      for (uint64_t target : targets) {
+        iter_state_.pending_ret_dispatch_cases[ret_block_addr].insert(target);
+      }
+    }
+
+    // Phase 6c: Try to add all pending RET dispatch cases
+    // (target blocks may have been lifted in this iteration)
+    for (auto &[ret_block_addr, targets] : iter_state_.pending_ret_dispatch_cases) {
+      auto sw_it = iter_state_.unresolved_indirect_jumps.find(ret_block_addr);
+      if (sw_it == iter_state_.unresolved_indirect_jumps.end() || !sw_it->second)
+        continue;
+
+      auto *sw = sw_it->second;
+      std::set<uint64_t> added_targets;
+
+      for (uint64_t target : targets) {
+        if (!blocks_.count(target)) continue;
+        auto *target_bb = blocks_[target];
+        if (!target_bb) continue;
+
+        // Check if case already exists
+        bool exists = false;
+        for (auto case_it : sw->cases()) {
+          if (case_it.getCaseValue()->getZExtValue() == target) {
+            exists = true;
+            break;
+          }
+        }
+
+        if (!exists) {
+          auto &ctx = sw->getContext();
+          sw->addCase(llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), target),
+                      target_bb);
+          utils::dbg() << "Added SCCP case " << llvm::format_hex(target, 0)
+                       << " to RET dispatch at " << llvm::format_hex(ret_block_addr, 0)
+                       << "\n";
+        }
+        added_targets.insert(target);
+      }
+
+      // Remove successfully added targets from pending list
+      for (uint64_t added : added_targets) {
+        targets.erase(added);
+      }
+    }
+
+    for (uint64_t target : resolution.new_targets) {
       // Filter out targets outside the code section
       if (target < code_start_ || target >= code_end_) {
         utils::dbg() << "Skipping out-of-bounds target " << llvm::format_hex(target, 0)

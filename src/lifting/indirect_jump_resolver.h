@@ -16,14 +16,20 @@ namespace lifting {
 // Forward declarations
 struct IterativeLiftingState;
 
+// Result structure for ResolveIndirectJumps
+struct IndirectJumpResolution {
+  std::set<uint64_t> new_targets;  // Blocks to discover
+  std::map<uint64_t, std::set<uint64_t>> ret_dispatch_cases;  // RET block → targets
+};
+
 // Helper class for resolving indirect jumps via SCCP analysis
 class IndirectJumpResolver {
  public:
   explicit IndirectJumpResolver(const utils::PEInfo *pe_info);
 
   // Resolve indirect jumps by cloning the module and running SCCP
-  // Returns set of newly discovered target addresses
-  std::set<uint64_t> ResolveIndirectJumps(
+  // Returns newly discovered targets and RET dispatch cases
+  IndirectJumpResolution ResolveIndirectJumps(
       llvm::Function *main_func,
       uint64_t entry_point,
       IterativeLiftingState &iter_state,

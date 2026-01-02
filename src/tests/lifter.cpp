@@ -5,6 +5,7 @@
 // Usage:
 //   lifter <shellcode.exe> [config.json] [--debug]
 
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -139,6 +140,9 @@ int main(int argc, char **argv) {
     if (output_dir == ".") return name;
     return output_dir + "/" + name;
   };
+
+  // Start timing
+  auto start_time = std::chrono::high_resolution_clock::now();
 
   // Parse config (use default if not provided)
   lifting::VariableConfig config;
@@ -377,6 +381,11 @@ int main(int argc, char **argv) {
 
   std::cout << "Written: " << out_path("test_optimized") << ".ll/.bc\n";
   std::cout << "Written: " << out_path("lifted") << ".ll/.bc\n";
+
+  // Print timing
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+  std::cout << "Lifting completed in " << duration.count() / 1000.0 << " seconds\n";
 
   return lift_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

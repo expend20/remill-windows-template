@@ -17,6 +17,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lifting_context.h"
+#include "indirect_jump_resolver.h"
 
 namespace lifting {
 
@@ -51,6 +52,11 @@ struct IterativeLiftingState {
 
   // Track which iteration discovered each block (for debugging)
   std::map<uint64_t, int> block_discovery_iteration;
+
+  // Pending RET dispatch cases discovered by SCCP but not yet added
+  // (target blocks may not be lifted yet)
+  // Maps: RET block address -> set of discovered target addresses
+  std::map<uint64_t, std::set<uint64_t>> pending_ret_dispatch_cases;
 };
 
 // Control flow-aware lifter that handles jumps and conditional branches
@@ -118,7 +124,7 @@ class ControlFlowLifter {
   bool LiftPendingBlocks();
 
   // Check switches for constant selectors and return newly discovered targets
-  std::set<uint64_t> ResolveIndirectJumps();
+  IndirectJumpResolution ResolveIndirectJumps();
 
   // Evaluate an LLVM Value assuming program_counter = entry_point_
   // Used to resolve switch selectors before inlining
